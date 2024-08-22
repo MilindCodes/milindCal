@@ -1,5 +1,5 @@
-from milindcal import generating_tasks, task_sort
-import unittest
+from milindcal import generating_tasks, task_sort, generate_file
+import unittest, os
 from unittest.mock import patch
 from milindcal import Task
 
@@ -53,7 +53,26 @@ class test_task_sort(unittest.TestCase):
         self.assertEqual(temp_list[1], "Pet cats")
         self.assertEqual(temp_list[2], "Walk dogs")
         self.assertEqual(temp_list[3], "Learn French")
-        
+
+class test_file_creation(unittest.TestCase):
+
+    def test_file_creation(self):
+        test_filename = "tasks"
+
+        mock_task_1 = Task("Walk dogs", "Walk dogs when you get home", 25, "!!")
+        mock_task_2 = Task("Drink Water", "Make sure to drink water after walking dogs", 1, "!!!")
+        mock_task_3 = Task("Pet cats", "Make sure to pet cats so they have fun", 5, "!!!")
+        mock_task_4 = Task("Learn French", "Make sure to practice Frensh on Duolingo", 10, "!")
+
+        mock_input = [{mock_task_1: 1}, {mock_task_2: 2}, {mock_task_3: 3}, {mock_task_4: 4}]
+
+        generate_file(mock_input)
+
+        self.assertTrue(os.path.exists(test_filename))
+
+        os.remove(test_filename)
+
+
 
     
 if __name__ == '__main__':
