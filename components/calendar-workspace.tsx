@@ -59,7 +59,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
   const [calendars, setCalendars] = useState<CalendarSummary[]>([]);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [view, setView] = useState<CalendarView>("dayGridMonth");
+  const [view, setView] = useState<CalendarView>("timeGridWeek");
   const [range, setRange] = useState<{ start: string; end: string }>({
     start: new Date().toISOString(),
     end: new Date(Date.now() + 1000 * 60 * 60 * 24 * 40).toISOString()
@@ -565,25 +565,25 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
               eventDrop={(arg) => void updateMovedOrResizedEvent(arg)}
               eventResize={(arg) => void updateMovedOrResizedEvent(arg)}
               events={fullCalendarEvents}
-              headerToolbar={{
-                left: "prev,next today",
-                center: "title",
-                right: ""
-              }}
-              height={calendarHeight}
-              initialView="dayGridMonth"
-              nowIndicator
-              plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, multiMonthPlugin]}
-              ref={calendarRef}
-              scrollTime="06:00:00"
-              scrollTimeReset={false}
-              selectable
-              select={onSelectRange}
-              slotMaxTime="24:00:00"
-              slotMinTime="00:00:00"
-              slotDuration="00:15:00"
-              weekends
-            />
+            headerToolbar={{
+              left: "prev,next today",
+              center: "title",
+              right: ""
+            }}
+            height={calendarHeight}
+            initialView="timeGridWeek"
+            nowIndicator
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, multiMonthPlugin]}
+            ref={calendarRef}
+            scrollTime="06:30:00"
+            scrollTimeReset={false}
+            selectable
+            select={onSelectRange}
+            slotMaxTime="24:00:00"
+            slotMinTime="06:30:00"
+            slotDuration="00:15:00"
+            weekends
+          />
           </motion.div>
           {loading ? <p className="loading-overlay">Syncing calendars...</p> : null}
         </motion.div>
