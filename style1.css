@@ -1,0 +1,78 @@
+/* General body settings */
+body {
+    font-family: 'Arial', sans-serif;
+    background-color: #FFF455; /* Light yellow background */
+    color: #007F73; /* Dark teal text for general readability */
+    line-height: 1.6;
+    padding: 20px;
+    margin: 0;
+}
+
+/* Header styling */
+header {
+    background-color: #007F73; /* Dark teal background */
+    color: #FFF;
+    padding: 1rem;
+    text-align: center;
+    border-bottom: 5px solid #4CCD99; /* Lighter green */
+}
+
+header h1 {
+    margin: 0;
+}
+
+/* Navigation menu styling */
+nav ul {
+    list-style: none;
+    padding: 0;
+}
+
+nav ul li {
+    display: inline;
+    margin-right: 20px;
+}
+
+nav ul li a {
+    text-decoration: none;
+    color: #FFF;
+    background-color: #4CCD99; /* Lighter green */
+    padding: 5px 15px;
+    border-radius: 15px; /* Rounded edges */
+    transition: background-color 0.3s;
+}
+
+nav ul li a:hover,
+nav ul li a:focus {
+    background-color: #FFC700; /* Yellow */
+    color: #000;
+}
+
+/* Main section styling */
+main {
+    padding: 20px;
+    background-color: #FFFFFF; /* White background for sections */
+    border-radius: 15px; /* Rounded edges */
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1); /* subtle shadow */
+}
+
+section {
+    margin-bottom: 20px;
+}
+
+/* Individual section styling */
+#calendar-section,
+#email-section,
+#todo-section {
+    padding: 20px;
+    background-color: #F0F4F8; /* Light grey for differentiation */
+    border-radius: 15px; /* Rounded edges */
+}
+
+/* Footer styling */
+footer {
+    text-align: center;
+    padding: 20px;
+    background-color: #4CCD99; /* Lighter green */
+    color: #FFF;
+    border-top: 5px solid #007F73; /* Dark teal */
+}
