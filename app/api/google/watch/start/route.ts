@@ -31,7 +31,7 @@ export async function POST(req: Request) {
         .map((item: unknown) => (typeof item === "string" ? item.trim() : ""))
         .filter(Boolean)
     )
-  );
+  ) as string[];
 
   if (!calendarIds.length) {
     return NextResponse.json({ error: "calendarIds is required" }, { status: 400 });

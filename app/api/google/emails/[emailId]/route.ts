@@ -83,14 +83,15 @@ function toBase64Url(value: string) {
     .replace(/=+$/g, "");
 }
 
-export async function GET(_req: Request, { params }: { params: { emailId: string } }) {
+export async function GET(_req: Request, context: { params: Promise<{ emailId: string }> }) {
+  const { emailId } = await context.params;
   const session = await getServerSession(authOptions);
 
   if (!session?.accessToken) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  if (!params.emailId) {
+  if (!emailId) {
     return NextResponse.json({ error: "Missing email id" }, { status: 400 });
   }
 
@@ -98,7 +99,7 @@ export async function GET(_req: Request, { params }: { params: { emailId: string
     const gmail = getGmailClient(session.accessToken);
     const message = await gmail.users.messages.get({
       userId: "me",
-      id: params.emailId,
+      id: emailId,
       format: "full",
       metadataHeaders: ["Subject", "From", "To", "Date"]
     });
@@ -119,14 +120,15 @@ export async function GET(_req: Request, { params }: { params: { emailId: string
   }
 }
 
-export async function POST(req: Request, { params }: { params: { emailId: string } }) {
+export async function POST(req: Request, context: { params: Promise<{ emailId: string }> }) {
+  const { emailId } = await context.params;
   const session = await getServerSession(authOptions);
 
   if (!session?.accessToken) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  if (!params.emailId) {
+  if (!emailId) {
     return NextResponse.json({ error: "Missing email id" }, { status: 400 });
   }
 
@@ -139,7 +141,7 @@ export async function POST(req: Request, { params }: { params: { emailId: string
     if (action === "archive") {
       await gmail.users.messages.modify({
         userId: "me",
-        id: params.emailId,
+        id: emailId,
         requestBody: {
           removeLabelIds: ["INBOX"]
         }
@@ -156,7 +158,7 @@ export async function POST(req: Request, { params }: { params: { emailId: string
 
       const sourceMessage = await gmail.users.messages.get({
         userId: "me",
-        id: params.emailId,
+        id: emailId,
         format: "metadata",
         metadataHeaders: ["Subject", "From", "Message-ID", "References"]
       });

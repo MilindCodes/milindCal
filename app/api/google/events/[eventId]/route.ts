@@ -7,7 +7,8 @@ import { touchUserSync } from "@/lib/watch-store";
 
 export const runtime = "nodejs";
 
-export async function PATCH(req: Request, { params }: { params: { eventId: string } }) {
+export async function PATCH(req: Request, context: { params: Promise<{ eventId: string }> }) {
+  const { eventId } = await context.params;
   const session = await getServerSession(authOptions);
 
   if (!session?.accessToken) {
@@ -18,14 +19,14 @@ export async function PATCH(req: Request, { params }: { params: { eventId: strin
   const calendarId = body.calendarId;
   const event = body.event as GoogleEventPayload;
 
-  if (!calendarId || !event || !params.eventId) {
+  if (!calendarId || !event || !eventId) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
   const calendar = getCalendarClient(session.accessToken);
   const updated = await calendar.events.patch({
     calendarId,
-    eventId: params.eventId,
+    eventId,
     sendUpdates: event.attendees.length ? "all" : "none",
     requestBody: mapClientEventToGoogle(event)
   });
@@ -39,7 +40,8 @@ export async function PATCH(req: Request, { params }: { params: { eventId: strin
   });
 }
 
-export async function DELETE(req: Request, { params }: { params: { eventId: string } }) {
+export async function DELETE(req: Request, context: { params: Promise<{ eventId: string }> }) {
+  const { eventId } = await context.params;
   const session = await getServerSession(authOptions);
 
   if (!session?.accessToken) {
@@ -49,14 +51,14 @@ export async function DELETE(req: Request, { params }: { params: { eventId: stri
   const { searchParams } = new URL(req.url);
   const calendarId = searchParams.get("calendarId");
 
-  if (!calendarId || !params.eventId) {
+  if (!calendarId || !eventId) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
   const calendar = getCalendarClient(session.accessToken);
   await calendar.events.delete({
     calendarId,
-    eventId: params.eventId,
+    eventId,
     sendUpdates: "all"
   });
 
