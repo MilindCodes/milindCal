@@ -559,7 +559,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
             <FullCalendar
               allDaySlot
               datesSet={onDatesSet}
-              dayMaxEvents
+              dayMaxEvents={5}
               editable
               eventClick={onEventClick}
               eventDrop={(arg) => void updateMovedOrResizedEvent(arg)}
