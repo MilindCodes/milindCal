@@ -185,19 +185,38 @@ export function mapGoogleMessageToClient(message: any): GmailMessageSummary {
   };
 }
 
+function htmlToCleanText(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|tr|li|h[1-6]|section|article|header|footer|blockquote|pre)>/gi, "\n")
+    .replace(/<(?:p|div|tr|li|h[1-6]|section|article|header|footer|blockquote|pre)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\t/g, " ")
+    .replace(/ {2,}/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function mapGoogleMessageToDetail(message: any): GmailMessageDetail {
   const summary = mapGoogleMessageToClient(message);
   const headers = (message.payload?.headers ?? []) as Array<{ name?: string | null; value?: string | null }>;
   const to = getHeaderValue(headers, "To") || "Unknown recipient";
   const extractedBody = extractBodyParts(message.payload);
+
+  const rawHtml = extractedBody.html.trim();
   const body =
     extractedBody.text.trim() ||
-    extractedBody.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() ||
+    (rawHtml ? htmlToCleanText(rawHtml) : "") ||
     summary.snippet;
 
   return {
     ...summary,
     to,
-    body: decodeHtmlEntities(body)
+    body: decodeHtmlEntities(body),
+    htmlBody: rawHtml ? decodeHtmlEntities(rawHtml) : undefined
   };
 }

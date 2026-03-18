@@ -19,10 +19,10 @@ interface TrailItem {
 
 const SHAPE_PATTERN: ShapeKind[] = ["square", "triangle", "circle"];
 const COLOR_PATTERN = ["#ef4444", "#3b82f6", "#facc15", "#10b981", "#a855f7", "#f97316"];
-const TRAIL_LIFETIME_MS = 900;
-const SPAWN_INTERVAL_MS = 55;
+const TRAIL_LIFETIME_MS = 1100;
+const SPAWN_INTERVAL_MS = 75;
 const CLEANUP_INTERVAL_MS = 120;
-const MAX_TRAIL_ITEMS = 36;
+const MAX_TRAIL_ITEMS = 16;
 
 export function CursorTrail() {
   const [items, setItems] = useState<TrailItem[]>([]);
@@ -60,7 +60,7 @@ export function CursorTrail() {
       const now = Date.now();
       const pointer = pointerRef.current;
 
-      if (!pointer.active || now - pointer.lastMoveAt > 140) {
+      if (!pointer.active || now - pointer.lastMoveAt > 200) {
         return;
       }
 
@@ -80,9 +80,9 @@ export function CursorTrail() {
         shape,
         color,
         size,
-        rotation: -35 + Math.random() * 70,
-        driftX: -30 + Math.random() * 60,
-        driftY: 16 + Math.random() * 34,
+        rotation: 0,
+        driftX: -10 + Math.random() * 20,
+        driftY: -9 + Math.random() * 18,
         createdAt: now
       };
 

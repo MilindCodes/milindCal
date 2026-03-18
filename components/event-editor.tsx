@@ -2,7 +2,8 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { addHours } from "date-fns";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
+import { ChevronDown, X } from "lucide-react";
 import { allDayEndToExclusive, allDayEndToInclusive, toDateOnly, toDateTimeLocal, toUtcRruleDate } from "@/lib/datetime";
 import { EVENT_TYPES, type CalendarEvent, type CalendarSummary, type EventTypeId, type GoogleEventPayload } from "@/lib/models";
 
@@ -17,6 +18,9 @@ interface EventEditorProps {
   defaultCalendarId?: string;
   defaultStart?: string;
   defaultEnd?: string;
+  defaultTitle?: string;
+  defaultDescription?: string;
+  entranceFrom?: "side" | "doc";
   initialEvent?: CalendarEvent | null;
   onClose: () => void;
   onDelete: (event: CalendarEvent) => Promise<void>;
@@ -49,11 +53,14 @@ function parseRecurrence(rule: string | undefined) {
   };
 }
 
-export function EventEditor({
+export const EventEditor = memo(function EventEditor({
   calendars,
   defaultCalendarId,
   defaultStart,
   defaultEnd,
+  defaultTitle,
+  defaultDescription,
+  entranceFrom = "side",
   initialEvent,
   onClose,
   onDelete,
@@ -81,6 +88,7 @@ export function EventEditor({
   const [useDefaultReminders, setUseDefaultReminders] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showMore, setShowMore] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -91,8 +99,8 @@ export function EventEditor({
 
     if (!initialEvent) {
       setCalendarId(defaultCalendarId ?? "primary");
-      setTitle("");
-      setDescription("");
+      setTitle(defaultTitle ?? "");
+      setDescription(defaultDescription ?? "");
       setLocation("");
       setAttendeesRaw("");
       setAllDay(false);
@@ -107,6 +115,7 @@ export function EventEditor({
       setPopupMinutes("10");
       setEmailMinutes("60");
       setUseDefaultReminders(false);
+      setShowMore(Boolean(defaultDescription));
       return;
     }
 
@@ -131,7 +140,16 @@ export function EventEditor({
     setPopupMinutes(String(popupReminder ?? 10));
     setEmailMinutes(String(emailReminder ?? 60));
     setUseDefaultReminders(initialEvent.reminders.useDefault);
-  }, [defaultCalendarId, defaultEnd, defaultStart, initialEvent, open, parsedRecurrence]);
+
+    // Auto-expand more options if the event has extra data populated
+    const hasExtra =
+      Boolean(initialEvent.location) ||
+      initialEvent.attendees.length > 0 ||
+      Boolean(initialEvent.description) ||
+      parsedRecurrence.frequency !== "NONE" ||
+      !initialEvent.reminders.useDefault;
+    setShowMore(hasExtra);
+  }, [defaultCalendarId, defaultDescription, defaultEnd, defaultStart, defaultTitle, initialEvent, open, parsedRecurrence]);
 
   const submit = async () => {
     if (!title.trim()) return;
@@ -199,174 +217,317 @@ export function EventEditor({
   return (
     <AnimatePresence>
       {open ? (
-        <motion.div animate={{ opacity: 1 }} className="overlay" exit={{ opacity: 0 }} initial={{ opacity: 0 }}>
           <motion.div
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            className="dialog event-dialog"
-            exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            initial={{ opacity: 0, y: 10, scale: 0.96 }}
+            key="event-popout"
+            animate={{ x: 0, y: 0, opacity: 1, scale: 1 }}
+            className="event-popout"
+            exit={entranceFrom === "doc"
+              ? { y: 16, opacity: 0, scale: 0.97, transition: { type: "spring", stiffness: 360, damping: 32 } }
+              : { x: 56, opacity: 0, scale: 0.97, transition: { type: "spring", stiffness: 340, damping: 34 } }
+            }
+            initial={entranceFrom === "doc"
+              ? { x: 0, y: 28, opacity: 0, scale: 0.96 }
+              : { x: 56, y: 0, opacity: 0, scale: 0.97 }
+            }
+            transition={entranceFrom === "doc"
+              ? { type: "spring", stiffness: 380, damping: 30 }
+              : { type: "spring", stiffness: 340, damping: 34 }
+            }
           >
-            <h3>{initialEvent ? "Edit event" : "Create event"}</h3>
+          {/* ── Header ── */}
+          <div className="event-popout__header">
+            <span className="event-popout__eyebrow">
+              {initialEvent ? "Edit event" : "New event"}
+            </span>
+            <motion.button
+              aria-label="Close"
+              className="event-popout__close"
+              onClick={onClose}
+              type="button"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+            >
+              <X size={13} />
+            </motion.button>
+          </div>
 
-            <label>
-              Title
-              <input onChange={(event) => setTitle(event.target.value)} placeholder="Team sync" value={title} />
-            </label>
+          {/* ── Scrollable body ── */}
+          <div className="event-popout__body">
 
-            <label>
-              Calendar
-              <select onChange={(event) => setCalendarId(event.target.value)} value={calendarId}>
-                {calendars.map((calendar) => (
-                  <option key={calendar.id} value={calendar.id}>
-                    {calendar.summary}
+            {/* Title */}
+            <input
+              autoFocus
+              className="event-popout__title-input"
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Event title"
+              value={title}
+            />
+
+            {/* Event type color pills */}
+            <div className="event-type-pills">
+              {EVENT_TYPES.map((t) => (
+                <motion.button
+                  key={t.id}
+                  className={`event-type-pill${eventType === t.id ? " event-type-pill--active" : ""}`}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  style={{ "--pill-color": t.color } as any}
+                  onClick={() => setEventType(t.id)}
+                  type="button"
+                  whileHover={{ scale: 1.05, y: -1 }}
+                  whileTap={{ scale: 0.96 }}
+                  transition={{ type: "spring", stiffness: 380, damping: 26 }}
+                >
+                  {t.label}
+                </motion.button>
+              ))}
+            </div>
+
+            {/* Calendar */}
+            <label className="event-popout__label-group">
+              <span className="event-popout__field-label">Calendar</span>
+              <select
+                className="event-popout__select"
+                onChange={(e) => setCalendarId(e.target.value)}
+                value={calendarId}
+              >
+                {calendars.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.summary}
                   </option>
                 ))}
               </select>
             </label>
 
+            {/* All-day toggle */}
             <div className="toggle-row">
               <span>All day</span>
-              <button className={`toggle ${allDay ? "on" : ""}`} onClick={() => setAllDay((value) => !value)} type="button">
-                <span />
-              </button>
-            </div>
-
-            {allDay ? (
-              <div className="inline-grid two">
-                <label>
-                  Start date
-                  <input onChange={(event) => setStartDateOnly(event.target.value)} type="date" value={startDateOnly} />
-                </label>
-                <label>
-                  End date
-                  <input onChange={(event) => setEndDateOnly(event.target.value)} type="date" value={endDateOnly} />
-                </label>
-              </div>
-            ) : (
-              <div className="inline-grid two">
-                <label>
-                  Start
-                  <input onChange={(event) => setStartDateTime(event.target.value)} type="datetime-local" value={startDateTime} />
-                </label>
-                <label>
-                  End
-                  <input onChange={(event) => setEndDateTime(event.target.value)} type="datetime-local" value={endDateTime} />
-                </label>
-              </div>
-            )}
-
-            <div className="inline-grid two">
-              <label>
-                Event type
-                <select onChange={(event) => setEventType(event.target.value as EventTypeId)} value={eventType}>
-                  {EVENT_TYPES.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                Recurrence
-                <select onChange={(event) => setFrequency(event.target.value as Frequency)} value={frequency}>
-                  <option value="NONE">None</option>
-                  <option value="DAILY">Daily</option>
-                  <option value="WEEKLY">Weekly</option>
-                  <option value="MONTHLY">Monthly</option>
-                  <option value="YEARLY">Yearly</option>
-                </select>
-              </label>
-            </div>
-
-            {frequency !== "NONE" ? (
-              <div className="inline-grid two">
-                <label>
-                  Interval
-                  <input min={1} onChange={(event) => setInterval(Number(event.target.value))} type="number" value={interval} />
-                </label>
-                <label>
-                  Until
-                  <input onChange={(event) => setUntil(event.target.value)} type="date" value={until} />
-                </label>
-              </div>
-            ) : null}
-
-            <label>
-              Attendees
-              <input
-                onChange={(event) => setAttendeesRaw(event.target.value)}
-                placeholder="name@company.com, second@company.com"
-                value={attendeesRaw}
-              />
-            </label>
-
-            <label>
-              Location
-              <input onChange={(event) => setLocation(event.target.value)} placeholder="Conference room / address" value={location} />
-            </label>
-
-            <label>
-              Description
-              <textarea onChange={(event) => setDescription(event.target.value)} rows={4} value={description} />
-            </label>
-
-            <div className="toggle-row">
-              <span>Use default Google reminders</span>
               <button
-                className={`toggle ${useDefaultReminders ? "on" : ""}`}
-                onClick={() => setUseDefaultReminders((value) => !value)}
+                className={`toggle ${allDay ? "on" : ""}`}
+                onClick={() => setAllDay((v) => !v)}
                 type="button"
               >
                 <span />
               </button>
             </div>
 
-            {!useDefaultReminders ? (
+            {/* Date / time inputs */}
+            {allDay ? (
               <div className="inline-grid two">
                 <label>
-                  Popup reminder (minutes before)
+                  Start date
                   <input
-                    min={0}
-                    onChange={(event) => setPopupMinutes(event.target.value)}
-                    type="number"
-                    value={popupMinutes}
+                    onChange={(e) => setStartDateOnly(e.target.value)}
+                    type="date"
+                    value={startDateOnly}
                   />
                 </label>
                 <label>
-                  Email reminder (minutes before)
+                  End date
                   <input
-                    min={0}
-                    onChange={(event) => setEmailMinutes(event.target.value)}
-                    type="number"
-                    value={emailMinutes}
+                    onChange={(e) => setEndDateOnly(e.target.value)}
+                    type="date"
+                    value={endDateOnly}
                   />
                 </label>
               </div>
-            ) : null}
+            ) : (
+              <div className="inline-grid two">
+                <label>
+                  Start
+                  <input
+                    onChange={(e) => setStartDateTime(e.target.value)}
+                    type="datetime-local"
+                    value={startDateTime}
+                  />
+                </label>
+                <label>
+                  End
+                  <input
+                    onChange={(e) => setEndDateTime(e.target.value)}
+                    type="datetime-local"
+                    value={endDateTime}
+                  />
+                </label>
+              </div>
+            )}
+
+            {/* More options toggle */}
+            <motion.button
+              className="event-popout__more-toggle"
+              onClick={() => setShowMore((v) => !v)}
+              type="button"
+              whileHover={{ backgroundColor: "rgba(127, 29, 29, 0.07)" }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <span>{showMore ? "Fewer options" : "More options"}</span>
+              <motion.span
+                animate={{ rotate: showMore ? 180 : 0 }}
+                style={{ display: "flex" }}
+                transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <ChevronDown size={13} />
+              </motion.span>
+            </motion.button>
+
+            {/* ── Expandable advanced section ── */}
+            <AnimatePresence initial={false}>
+              {showMore ? (
+                <motion.div
+                  key="more-fields"
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  initial={{ height: 0, opacity: 0 }}
+                  style={{ overflow: "hidden" }}
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                >
+                  <div className="event-popout__more-body">
+                    <label>
+                      Location
+                      <input
+                        onChange={(e) => setLocation(e.target.value)}
+                        placeholder="Conference room / address"
+                        value={location}
+                      />
+                    </label>
+
+                    <label>
+                      Attendees
+                      <input
+                        onChange={(e) => setAttendeesRaw(e.target.value)}
+                        placeholder="name@company.com, second@company.com"
+                        value={attendeesRaw}
+                      />
+                    </label>
+
+                    <label>
+                      Description
+                      <textarea
+                        onChange={(e) => setDescription(e.target.value)}
+                        rows={3}
+                        value={description}
+                      />
+                    </label>
+
+                    <div className="inline-grid two">
+                      <label>
+                        Repeat
+                        <select
+                          onChange={(e) => setFrequency(e.target.value as Frequency)}
+                          value={frequency}
+                        >
+                          <option value="NONE">None</option>
+                          <option value="DAILY">Daily</option>
+                          <option value="WEEKLY">Weekly</option>
+                          <option value="MONTHLY">Monthly</option>
+                          <option value="YEARLY">Yearly</option>
+                        </select>
+                      </label>
+                      {frequency !== "NONE" ? (
+                        <label>
+                          Interval
+                          <input
+                            min={1}
+                            onChange={(e) => setInterval(Number(e.target.value))}
+                            type="number"
+                            value={interval}
+                          />
+                        </label>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
+
+                    {frequency !== "NONE" ? (
+                      <label>
+                        Until
+                        <input
+                          onChange={(e) => setUntil(e.target.value)}
+                          type="date"
+                          value={until}
+                        />
+                      </label>
+                    ) : null}
+
+                    <div className="toggle-row">
+                      <span>Use default reminders</span>
+                      <button
+                        className={`toggle ${useDefaultReminders ? "on" : ""}`}
+                        onClick={() => setUseDefaultReminders((v) => !v)}
+                        type="button"
+                      >
+                        <span />
+                      </button>
+                    </div>
+
+                    {!useDefaultReminders ? (
+                      <div className="inline-grid two">
+                        <label>
+                          Popup (min)
+                          <input
+                            min={0}
+                            onChange={(e) => setPopupMinutes(e.target.value)}
+                            type="number"
+                            value={popupMinutes}
+                          />
+                        </label>
+                        <label>
+                          Email (min)
+                          <input
+                            min={0}
+                            onChange={(e) => setEmailMinutes(e.target.value)}
+                            type="number"
+                            value={emailMinutes}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
 
             {submitError ? <p className="error-line">{submitError}</p> : null}
+          </div>
 
-            <div className="dialog-actions">
-              {initialEvent ? (
-                <button className="danger-button" onClick={() => void onDelete(initialEvent)} type="button">
-                  Delete
-                </button>
-              ) : (
-                <span />
-              )}
-              <div>
-                <button className="ghost-button" onClick={onClose} type="button">
-                  Cancel
-                </button>
-                <button className="primary-button" disabled={isSubmitting || !title.trim()} onClick={submit} type="button">
-                  {initialEvent ? "Save" : "Create"}
-                </button>
-              </div>
+          {/* ── Footer ── */}
+          <div className="event-popout__footer">
+            {initialEvent ? (
+              <motion.button
+                className="danger-button"
+                onClick={() => void onDelete(initialEvent)}
+                type="button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+              >
+                Delete
+              </motion.button>
+            ) : (
+              <span />
+            )}
+            <div style={{ display: "flex", gap: "8px" }}>
+              <motion.button
+                className="ghost-button"
+                onClick={onClose}
+                type="button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+              >
+                Cancel
+              </motion.button>
+              <motion.button
+                className="primary-button"
+                disabled={isSubmitting || !title.trim()}
+                onClick={submit}
+                type="button"
+                whileHover={{ scale: 1.02, y: -1 }}
+                whileTap={{ scale: 0.97 }}
+              >
+                {isSubmitting ? "Saving…" : initialEvent ? "Save" : "Create"}
+              </motion.button>
             </div>
-          </motion.div>
+          </div>
         </motion.div>
       ) : null}
     </AnimatePresence>
   );
-}
+});
