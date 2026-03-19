@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { addHours } from "date-fns";
-import { memo, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, memo, useEffect, useMemo, useState } from "react";
 import { ChevronDown, X } from "lucide-react";
 import { allDayEndToExclusive, allDayEndToInclusive, toDateOnly, toDateTimeLocal, toUtcRruleDate } from "@/lib/datetime";
 import { EVENT_TYPES, type CalendarEvent, type CalendarSummary, type EventTypeId, type GoogleEventPayload } from "@/lib/models";
@@ -269,8 +269,7 @@ export const EventEditor = memo(function EventEditor({
                 <motion.button
                   key={t.id}
                   className={`event-type-pill${eventType === t.id ? " event-type-pill--active" : ""}`}
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  style={{ "--pill-color": t.color } as any}
+                  style={{ "--pill-color": t.color } as CSSProperties}
                   onClick={() => setEventType(t.id)}
                   type="button"
                   whileHover={{ scale: 1.05, y: -1 }}

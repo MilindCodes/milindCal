@@ -1,6 +1,6 @@
 "use client";
 
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
@@ -28,7 +28,7 @@ interface MilindDocProps {
   onAddToTodo: (title: string) => void;
 }
 
-function extractTitle(editor: ReturnType<typeof useEditor>): string {
+function extractTitle(editor: Editor | null): string {
   if (!editor) return "Untitled";
   const json = editor.getJSON();
   for (const node of json.content ?? []) {
@@ -51,7 +51,7 @@ function nodeToText(node: { type?: string; content?: unknown[]; text?: string })
   return inner;
 }
 
-function extractDescription(editor: ReturnType<typeof useEditor>): string {
+function extractDescription(editor: Editor | null): string {
   if (!editor) return "";
   const json = editor.getJSON();
   const nodes = json.content ?? [];
