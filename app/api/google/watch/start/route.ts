@@ -140,7 +140,12 @@ export async function POST(req: Request) {
     await putChannels(createdChannels);
   }
 
-  await touchUserSync(userEmail);
+  // Channels are already registered (both with Google and in the store) at this
+  // point — a sync-signal hiccup must not report an already-successful watch
+  // setup as a failure.
+  await touchUserSync(userEmail).catch((err) => {
+    console.error("[watch/start] touchUserSync failed after successful setup:", err);
+  });
 
   const mergedChannels = [
     ...Array.from(activeByCalendar.values()).filter((item) => calendarIds.includes(item.calendarId)),

@@ -126,7 +126,7 @@ export function DocsStickyPanel({ onSendToCanvas }: DocsStickyPanelProps) {
                   if (e.key === "Escape") { setCreating(false); setNewText(""); }
                 }}
                 placeholder="Write a note…"
-                rows={3}
+                rows={4}
                 value={newText}
               />
               <div className="sticky-note-color-row">
@@ -174,7 +174,7 @@ export function DocsStickyPanel({ onSendToCanvas }: DocsStickyPanelProps) {
                     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(note.id); }
                     if (e.key === "Escape") setEditingId(null);
                   }}
-                  rows={3}
+                  rows={4}
                   value={editText}
                 />
               ) : (

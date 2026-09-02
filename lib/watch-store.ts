@@ -1,5 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { kvGet, kvSet } from "@/lib/kv";
 
 export interface WatchChannel {
   channelId: string;
@@ -16,42 +15,26 @@ interface WatchState {
   userSyncVersion: Record<string, number>;
 }
 
-let memoryState: WatchState | null = null;
+const KV_KEY = "milindcal:watch-state";
 
-function getStorePath() {
-  return process.env.WATCH_STATE_PATH || "/tmp/milindcal-watch-state.json";
-}
-
+// No in-memory cache here on purpose: this runs across many independent
+// serverless instances (e.g. the webhook route and the version-poll route
+// are separate warm containers), and a per-process cache with no
+// invalidation would let a warm instance serve stale data indefinitely —
+// and worse, clobber concurrent writes from other instances when it next
+// saves from its stale snapshot. Always reading fresh from KV costs one
+// extra round-trip (~10-50ms) per request, which is a non-issue at this
+// app's traffic.
 async function loadState(): Promise<WatchState> {
-  if (memoryState) {
-    return memoryState;
-  }
-
-  const filePath = getStorePath();
-
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const parsed = JSON.parse(raw) as WatchState;
-
-    memoryState = {
-      channels: parsed.channels ?? [],
-      userSyncVersion: parsed.userSyncVersion ?? {}
-    };
-  } catch {
-    memoryState = {
-      channels: [],
-      userSyncVersion: {}
-    };
-  }
-
-  return memoryState;
+  const stored = await kvGet<WatchState>(KV_KEY);
+  return {
+    channels: stored?.channels ?? [],
+    userSyncVersion: stored?.userSyncVersion ?? {}
+  };
 }
 
 async function saveState(state: WatchState) {
-  const filePath = getStorePath();
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(state, null, 2), "utf-8");
-  memoryState = state;
+  await kvSet(KV_KEY, state);
 }
 
 export async function listUserChannels(userEmail: string) {

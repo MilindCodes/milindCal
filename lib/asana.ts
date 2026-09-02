@@ -1,6 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import crypto from "node:crypto";
-import path from "node:path";
+import { kvGet, kvSet } from "@/lib/kv";
 import type { Task, TaskImportance } from "@/lib/models";
 
 /* ------------------------------------------------------------------ */
@@ -23,35 +22,27 @@ interface AsanaStore {
   syncVersion: number;
 }
 
-let memoryStore: AsanaStore | null = null;
+const KV_KEY = "milindcal:asana-store";
 
-function getStorePath() {
-  return process.env.ASANA_TOKEN_PATH ?? "/tmp/milindcal-asana-store.json";
-}
-
+// No in-memory cache here on purpose: this runs across many independent
+// serverless instances (e.g. the webhook route and the version-poll route
+// are separate warm containers), and a per-process cache with no
+// invalidation would let a warm instance serve a stale Asana token
+// indefinitely — and worse, clobber a concurrent token refresh from another
+// instance when it next saves from its stale snapshot. Always reading fresh
+// from KV costs one extra round-trip (~10-50ms) per request, which is a
+// non-issue at this app's traffic.
 async function loadStore(): Promise<AsanaStore> {
-  if (memoryStore) return memoryStore;
-
-  try {
-    const raw = await readFile(getStorePath(), "utf-8");
-    const parsed = JSON.parse(raw) as Partial<AsanaStore>;
-    memoryStore = {
-      token: parsed.token ?? null,
-      webhookSecret: parsed.webhookSecret ?? null,
-      syncVersion: parsed.syncVersion ?? 0,
-    };
-  } catch {
-    memoryStore = { token: null, webhookSecret: null, syncVersion: 0 };
-  }
-
-  return memoryStore;
+  const stored = await kvGet<Partial<AsanaStore>>(KV_KEY);
+  return {
+    token: stored?.token ?? null,
+    webhookSecret: stored?.webhookSecret ?? null,
+    syncVersion: stored?.syncVersion ?? 0,
+  };
 }
 
 async function saveStore(store: AsanaStore) {
-  const filePath = getStorePath();
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(store, null, 2), "utf-8");
-  memoryStore = store;
+  await kvSet(KV_KEY, store);
 }
 
 export async function getStoredToken(): Promise<AsanaToken | null> {

@@ -52,7 +52,11 @@ export async function POST(req: Request) {
   );
 
   await removeChannels(toStop.map((item) => item.channelId));
-  await touchUserSync(userEmail);
+  // Channels are already removed from the store at this point — a sync-signal
+  // hiccup must not report an already-successful stop as a failure.
+  await touchUserSync(userEmail).catch((err) => {
+    console.error("[watch/stop] touchUserSync failed after successful stop:", err);
+  });
 
   return NextResponse.json({ stopped: toStop.length });
 }

@@ -8,7 +8,8 @@ const GOOGLE_AUTH_SCOPE = [
   "profile",
   "https://www.googleapis.com/auth/calendar",
   "https://www.googleapis.com/auth/gmail.modify",
-  "https://www.googleapis.com/auth/gmail.send"
+  "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/contacts.readonly"
 ].join(" ");
 
 async function refreshGoogleAccessToken(token: JWT): Promise<JWT> {

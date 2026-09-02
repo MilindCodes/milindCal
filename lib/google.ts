@@ -1,4 +1,6 @@
-import { google } from "googleapis";
+import { auth as calendarAuth, calendar } from "@googleapis/calendar";
+import { auth as gmailAuth, gmail } from "@googleapis/gmail";
+import { auth as peopleAuth, people } from "@googleapis/people";
 import { EVENT_TYPE_BY_ID } from "@/lib/models";
 import type { CalendarEvent, EventTypeId, GmailMessageDetail, GmailMessageSummary, GoogleEventPayload } from "@/lib/models";
 
@@ -16,20 +18,27 @@ const GOOGLE_EVENT_COLORS: Record<string, string> = {
   "11": "#dc2127"
 };
 
-function createGoogleOAuthClient(accessToken: string) {
-  const auth = new google.auth.OAuth2();
-  auth.setCredentials({ access_token: accessToken });
-  return auth;
-}
+// Each modular @googleapis/* package bundles its own google-auth-library, so we
+// build the OAuth2 client from each package's own `auth` export to keep the
+// client and its auth type in the same realm (a shared google-auth-library
+// would fail to typecheck against the nested copies).
 
 export function getCalendarClient(accessToken: string) {
-  const auth = createGoogleOAuthClient(accessToken);
-  return google.calendar({ version: "v3", auth });
+  const oauth = new calendarAuth.OAuth2();
+  oauth.setCredentials({ access_token: accessToken });
+  return calendar({ version: "v3", auth: oauth });
 }
 
 export function getGmailClient(accessToken: string) {
-  const auth = createGoogleOAuthClient(accessToken);
-  return google.gmail({ version: "v1", auth });
+  const oauth = new gmailAuth.OAuth2();
+  oauth.setCredentials({ access_token: accessToken });
+  return gmail({ version: "v1", auth: oauth });
+}
+
+export function getPeopleClient(accessToken: string) {
+  const oauth = new peopleAuth.OAuth2();
+  oauth.setCredentials({ access_token: accessToken });
+  return people({ version: "v1", auth: oauth });
 }
 
 function isEventTypeId(value: unknown): value is EventTypeId {
@@ -51,7 +60,7 @@ export function mapGoogleEventToClient(
   return {
     id: event.id,
     calendarId,
-    title: event.summary ?? "Untitled",
+    title: event.summary?.trim() || "Untitled",
     description: event.description ?? "",
     location: event.location ?? "",
     start: event.start?.dateTime ?? event.start?.date,
@@ -65,7 +74,8 @@ export function mapGoogleEventToClient(
     },
     eventType,
     color: fallbackColor,
-    colorId: event.colorId ?? EVENT_TYPE_BY_ID[eventType].googleColorId
+    colorId: event.colorId ?? EVENT_TYPE_BY_ID[eventType].googleColorId,
+    etag: typeof event.etag === "string" ? event.etag : undefined
   };
 }
 
@@ -205,6 +215,7 @@ export function mapGoogleMessageToDetail(message: any): GmailMessageDetail {
   const summary = mapGoogleMessageToClient(message);
   const headers = (message.payload?.headers ?? []) as Array<{ name?: string | null; value?: string | null }>;
   const to = getHeaderValue(headers, "To") || "Unknown recipient";
+  const ccRaw = getHeaderValue(headers, "Cc") || getHeaderValue(headers, "CC");
   const extractedBody = extractBodyParts(message.payload);
 
   const rawHtml = extractedBody.html.trim();
@@ -216,6 +227,7 @@ export function mapGoogleMessageToDetail(message: any): GmailMessageDetail {
   return {
     ...summary,
     to,
+    cc: ccRaw || undefined,
     body: decodeHtmlEntities(body),
     htmlBody: rawHtml ? decodeHtmlEntities(rawHtml) : undefined
   };

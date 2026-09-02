@@ -68,6 +68,16 @@ function extractEmailAddress(rawFromHeader: string) {
   return directMatch?.[0]?.trim() ?? rawFromHeader.trim();
 }
 
+/** Split a header containing multiple addresses (comma-separated) into individual email strings */
+function splitAddresses(header: string): string[] {
+  if (!header.trim()) return [];
+  // Split on commas not inside angle brackets
+  return header
+    .split(/,(?![^<]*>)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function toReplySubject(subject: string) {
   if (!subject) {
     return "Re: (No subject)";
@@ -101,7 +111,7 @@ export async function GET(_req: Request, context: { params: Promise<{ emailId: s
       userId: "me",
       id: emailId,
       format: "full",
-      metadataHeaders: ["Subject", "From", "To", "Date"]
+      metadataHeaders: ["Subject", "From", "To", "Cc", "Date", "Reply-To"]
     });
 
     return NextResponse.json({ email: mapGoogleMessageToDetail(message.data) });
@@ -150,17 +160,20 @@ export async function POST(req: Request, context: { params: Promise<{ emailId: s
       return NextResponse.json({ ok: true });
     }
 
-    if (action === "reply") {
+    if (action === "reply" || action === "reply-all") {
       const replyText = String(body?.replyText ?? "").trim();
       if (!replyText) {
         return NextResponse.json({ error: "Reply text is required" }, { status: 400 });
       }
 
+      const extraCc = String(body?.cc ?? "").trim();
+      const extraBcc = String(body?.bcc ?? "").trim();
+
       const sourceMessage = await gmail.users.messages.get({
         userId: "me",
         id: emailId,
         format: "metadata",
-        metadataHeaders: ["Subject", "From", "Message-ID", "References"]
+        metadataHeaders: ["Subject", "From", "To", "Cc", "Reply-To", "Message-ID", "References"]
       });
 
       const headers = (sourceMessage.data.payload?.headers ?? []) as Array<{
@@ -169,18 +182,45 @@ export async function POST(req: Request, context: { params: Promise<{ emailId: s
       }>;
 
       const fromHeader = getHeaderValue(headers, "From");
+      const replyToHeader = getHeaderValue(headers, "Reply-To");
+      const originalTo = getHeaderValue(headers, "To");
+      const originalCc = getHeaderValue(headers, "Cc");
       const subject = toReplySubject(getHeaderValue(headers, "Subject"));
       const messageId = getHeaderValue(headers, "Message-ID");
       const references = getHeaderValue(headers, "References");
-      const to = extractEmailAddress(fromHeader);
 
-      if (!to) {
+      // Primary "To" recipient — prefer Reply-To over From
+      const primaryRecipient = extractEmailAddress(replyToHeader || fromHeader);
+      if (!primaryRecipient) {
         return NextResponse.json({ error: "Unable to determine recipient for reply" }, { status: 400 });
+      }
+
+      let ccValue = extraCc;
+
+      if (action === "reply-all") {
+        // Fetch the user's own email to exclude from CC
+        const profileRes = await gmail.users.getProfile({ userId: "me" });
+        const myEmail = (profileRes.data.emailAddress ?? "").toLowerCase();
+
+        // Collect all original To + Cc addresses minus self and the primary To
+        const allOriginal = [
+          ...splitAddresses(originalTo),
+          ...splitAddresses(originalCc),
+        ];
+        const ccAddresses = allOriginal
+          .map((addr) => extractEmailAddress(addr))
+          .filter((addr) => addr && addr.toLowerCase() !== myEmail && addr.toLowerCase() !== primaryRecipient.toLowerCase());
+
+        // Merge with any manually provided CC
+        const mergedCc = [...new Set([...ccAddresses, ...splitAddresses(extraCc).map((a) => extractEmailAddress(a)).filter(Boolean)])];
+        ccValue = mergedCc.join(", ");
       }
 
       const referencesValue = [references, messageId].filter(Boolean).join(" ").trim();
       const rawMessage = [
-        `To: ${to}`,
+        `To: ${primaryRecipient}`,
+        ccValue ? `Cc: ${ccValue}` : "",
+        extraBcc ? `Bcc: ${extraBcc}` : "",
         `Subject: ${subject}`,
         "Content-Type: text/plain; charset=UTF-8",
         "MIME-Version: 1.0",

@@ -1,133 +1,78 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
-type ShapeKind = "square" | "triangle" | "circle";
-
-interface TrailItem {
-  id: number;
-  x: number;
-  y: number;
-  shape: ShapeKind;
-  color: string;
-  size: number;
-  rotation: number;
-  driftX: number;
-  driftY: number;
-  createdAt: number;
-}
-
-const SHAPE_PATTERN: ShapeKind[] = ["square", "triangle", "circle"];
-const COLOR_PATTERN = ["#ef4444", "#3b82f6", "#facc15", "#10b981", "#a855f7", "#f97316"];
-const TRAIL_LIFETIME_MS = 1100;
-const SPAWN_INTERVAL_MS = 75;
-const CLEANUP_INTERVAL_MS = 120;
-const MAX_TRAIL_ITEMS = 16;
+const CURSOR_RADIUS = 6; // px — half of 12px diameter
 
 export function CursorTrail() {
-  const [items, setItems] = useState<TrailItem[]>([]);
-  const pointerRef = useRef({ x: 0, y: 0, active: false, lastMoveAt: 0 });
-  const idRef = useRef(0);
-  const shapeIndexRef = useRef(0);
-  const colorIndexRef = useRef(0);
+  const dotRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const finePointer = window.matchMedia("(pointer:fine)").matches;
+    // Only override cursor on fine-pointer (mouse) devices...
+    if (!window.matchMedia("(pointer: fine)").matches) return;
+    // ...and never for someone who asked for reduced motion: a JS-driven dot
+    // chasing the pointer is exactly the kind of movement that setting opts
+    // out of, and they're better served by their own system cursor.
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
-    if (reduceMotion || !finePointer) {
-      return;
-    }
+    const dot = dotRef.current;
+    if (!dot) return;
 
-    const onPointerMove = (event: PointerEvent) => {
-      pointerRef.current = {
-        x: event.clientX,
-        y: event.clientY,
-        active: true,
-        lastMoveAt: Date.now()
-      };
+    // Only now — with the element in hand and about to be driven — do we let
+    // the stylesheet hide the native cursor. Anything that prevents us
+    // reaching this line leaves the real cursor in place.
+    const root = document.documentElement;
+    root.classList.add("custom-cursor-active");
+
+    // rAF-coalesce pointermove so the DOM write happens at most once per
+    // frame instead of on every pointer event (~120Hz on modern trackpads).
+    let nextX = 0;
+    let nextY = 0;
+    let hasPending = false;
+    let rafId: number | null = null;
+
+    const flush = () => {
+      rafId = null;
+      hasPending = false;
+      dot.style.transform = `translate(${nextX - CURSOR_RADIUS}px, ${nextY - CURSOR_RADIUS}px)`;
+      if (dot.style.opacity !== "1") dot.style.opacity = "1";
     };
 
-    const onPointerLeave = () => {
-      pointerRef.current.active = false;
+    const onMove = (e: PointerEvent) => {
+      nextX = e.clientX;
+      nextY = e.clientY;
+      if (hasPending) return;
+      hasPending = true;
+      rafId = requestAnimationFrame(flush);
     };
 
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    window.addEventListener("pointerleave", onPointerLeave);
-    window.addEventListener("blur", onPointerLeave);
-
-    const spawnTimer = window.setInterval(() => {
-      const now = Date.now();
-      const pointer = pointerRef.current;
-
-      if (!pointer.active || now - pointer.lastMoveAt > 200) {
-        return;
+    const onLeave = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+        hasPending = false;
       }
+      dot.style.opacity = "0";
+    };
 
-      const shape = SHAPE_PATTERN[shapeIndexRef.current % SHAPE_PATTERN.length];
-      const color = COLOR_PATTERN[colorIndexRef.current % COLOR_PATTERN.length];
-
-      shapeIndexRef.current += 1;
-      colorIndexRef.current += 1;
-      idRef.current += 1;
-
-      const size = 12 + (shapeIndexRef.current % 4) * 3;
-
-      const nextItem: TrailItem = {
-        id: idRef.current,
-        x: pointer.x,
-        y: pointer.y,
-        shape,
-        color,
-        size,
-        rotation: 0,
-        driftX: -10 + Math.random() * 20,
-        driftY: -9 + Math.random() * 18,
-        createdAt: now
-      };
-
-      setItems((previous) => {
-        const activeItems = previous.filter((item) => now - item.createdAt < TRAIL_LIFETIME_MS);
-        return [...activeItems, nextItem].slice(-MAX_TRAIL_ITEMS);
-      });
-    }, SPAWN_INTERVAL_MS);
-
-    const cleanupTimer = window.setInterval(() => {
-      const now = Date.now();
-      setItems((previous) => previous.filter((item) => now - item.createdAt < TRAIL_LIFETIME_MS));
-    }, CLEANUP_INTERVAL_MS);
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerleave", onLeave);
+    window.addEventListener("blur", onLeave);
 
     return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerleave", onPointerLeave);
-      window.removeEventListener("blur", onPointerLeave);
-      window.clearInterval(spawnTimer);
-      window.clearInterval(cleanupTimer);
+      root.classList.remove("custom-cursor-active");
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerleave", onLeave);
+      window.removeEventListener("blur", onLeave);
     };
   }, []);
 
-  if (!items.length) {
-    return null;
-  }
-
   return (
-    <div aria-hidden className="cursor-trail-layer">
-      {items.map((item) => (
-        <span
-          className={`cursor-shape ${item.shape}`}
-          key={item.id}
-          style={{
-            left: item.x,
-            top: item.y,
-            width: item.size,
-            height: item.size,
-            backgroundColor: item.color,
-            ["--trail-dx" as string]: `${item.driftX}px`,
-            ["--trail-dy" as string]: `${item.driftY}px`,
-            ["--trail-rotate" as string]: `${item.rotation}deg`
-          }}
-        />
-      ))}
-    </div>
+    <div
+      aria-hidden
+      ref={dotRef}
+      className="custom-cursor"
+    />
   );
 }

@@ -5,18 +5,44 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import multiMonthPlugin from "@fullcalendar/multimonth";
 import timeGridPlugin from "@fullcalendar/timegrid";
-import type { DatesSetArg, EventClickArg, EventInput } from "@fullcalendar/core";
-import { AnimatePresence, animate, motion, useMotionValue } from "framer-motion";
-import { AlertCircle, AlertTriangle, CalendarPlus, ChevronDown, Layers, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
+import type { DateSelectArg, DatesSetArg, EventChangeArg, EventClickArg, EventContentArg, EventInput, MoreLinkArg } from "@fullcalendar/core";
+import { AnimatePresence, animate, motion, useMotionValue, useSpring, useTransform, LayoutGroup } from "framer-motion";
+import { AlertCircle, AlertTriangle, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, Circle, FileText, Layers, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { signIn } from "next-auth/react";
 import { AuthActions } from "@/components/auth-actions";
 import { BrandMark } from "@/components/brand-mark";
+import { EntityStoreProvider, useEntityActions, useTasks } from "@/components/entity-store-context";
 import { EventEditor } from "@/components/event-editor";
 import { NewCalendarDialog } from "@/components/new-calendar-dialog";
-import { MilindDocsSection } from "@/components/milind-docs-section";
-import { NodeCanvasView } from "@/components/node-canvas-view";
+import dynamic from "next/dynamic";
+import { CalendarEventTile } from "@/components/calendar-event-tile";
 import { TasksSidebar } from "@/components/tasks-sidebar";
-import type { CalendarEvent, CalendarSummary, GoogleEventPayload, PanelNote } from "@/lib/models";
+import { UniversalDragLayer, useUniversalDroppable, type UniversalDropEvent } from "@/components/universal-drag-layer";
+import { entityKey, eventKey, parseEventId, type EntityKey, type UniversalDragPayload } from "@/lib/entity-store";
+import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, Task } from "@/lib/models";
+
+/* ── Lazily-loaded heavy views ──
+ *
+ * Neither of these is on the first-paint path: the canvas renders only when
+ * the user picks the Canvas view, and the docs overlay is mounted on an idle
+ * callback after the calendar is interactive. Importing them statically put
+ * TipTap (15 packages) and the whole canvas/graph tree into the initial
+ * bundle anyway, so the idle-mount deferral bought nothing. `next/dynamic`
+ * makes the deferral real — the chunks are fetched when first rendered.
+ *
+ * ssr:false because both are client-only (they touch window/localStorage on
+ * mount) and neither contributes to the server-rendered shell.
+ */
+const NodeCanvasView = dynamic(
+  () => import("@/components/node-canvas-view").then((m) => m.NodeCanvasView),
+  { ssr: false },
+);
+
+const MilindDocsSection = dynamic(
+  () => import("@/components/milind-docs-section").then((m) => m.MilindDocsSection),
+  { ssr: false },
+);
 
 type CalendarView = "timeGridDay" | "timeGridWeek" | "dayGridMonth" | "multiMonthYear" | "nodeCanvas";
 
@@ -34,6 +60,10 @@ const springTransition = {
   stiffness: 240,
   damping: 24
 } as const;
+
+// Dive physics (hoisted — stable identity so useSpring doesn't re-init on every render)
+const DIVE_SPRING = { stiffness: 480, damping: 42, mass: 0.7 } as const;
+const STRETCH_SPRING = { stiffness: 260, damping: 26, mass: 0.9 } as const;
 
 const shellVariants = {
   hidden: { opacity: 0, y: 18, scale: 0.99 },
@@ -57,8 +87,16 @@ const itemVariants = {
 
 const MONTH_DAY_EVENT_PREVIEW_LIMIT = 5;
 
+// Module-level cache: most calendars share a small set of colors so repeated
+// calls for the same hex are O(1) after the first computation.
+const textColorCache = new Map<string, string>();
+
 function getTextColorForBg(hex: string): string {
+  if (!hex || typeof hex !== "string") return "#f0f4ff";
+  const cached = textColorCache.get(hex);
+  if (cached) return cached;
   const clean = hex.replace("#", "");
+  if (clean.length < 6) return "#f0f4ff";
   const r = parseInt(clean.slice(0, 2), 16);
   const g = parseInt(clean.slice(2, 4), 16);
   const b = parseInt(clean.slice(4, 6), 16);
@@ -68,7 +106,26 @@ function getTextColorForBg(hex: string): string {
     return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
   };
   const L = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
-  return L > 0.35 ? "#1a1a2e" : "#f0f4ff";
+  const result = L > 0.35 ? "#1a1a2e" : "#f0f4ff";
+  textColorCache.set(hex, result);
+  return result;
+}
+
+/** Etag-less fallback comparison. Only covers the fields that reach the
+ *  rendered tile or the editor's initial state — anything else changing
+ *  without an etag change wouldn't be visible until the next full reload
+ *  anyway. */
+function isRenderedEventChanged(a: CalendarEvent, b: CalendarEvent): boolean {
+  return (
+    a.title !== b.title ||
+    a.start !== b.start ||
+    a.end !== b.end ||
+    a.allDay !== b.allDay ||
+    a.color !== b.color ||
+    a.location !== b.location ||
+    a.description !== b.description ||
+    a.attendees.length !== b.attendees.length
+  );
 }
 
 const VIEW_LABELS: Record<CalendarView, string> = {
@@ -87,20 +144,52 @@ const VIEW_OPTIONS = [
   { label: "Canvas", value: "nodeCanvas" }
 ] as const;
 
-export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
+// How far beyond the visible range to pre-fetch on each load.
+const PREFETCH_BEFORE_MS = 14 * 24 * 60 * 60 * 1000; // 2 weeks back
+const PREFETCH_AFTER_MS  = 42 * 24 * 60 * 60 * 1000; // 6 weeks forward
+// Consider cached data stale after 3 minutes.
+const CACHE_TTL_MS = 3 * 60 * 1000;
+
+export function CalendarWorkspace(props: CalendarWorkspaceProps) {
+  return (
+    <EntityStoreProvider>
+      <CalendarWorkspaceInner {...props} />
+    </EntityStoreProvider>
+  );
+}
+
+function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
+  const tasks = useTasks();
+  const { addTask, addDoc, link, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
   const calendarRef = useRef<FullCalendar | null>(null);
   const calendarFrameRef = useRef<HTMLDivElement | null>(null);
   const syncVersionRef = useRef(0);
   const readEventsAbortRef = useRef<AbortController | null>(null);
   const readCalendarsAbortRef = useRef<AbortController | null>(null);
+  // Event cache keyed by "calendarId::eventId" — accumulates across navigations
+  // so switching between weeks is instant once the data has been pre-fetched.
+  const eventsCacheRef = useRef<Map<string, CalendarEvent>>(new Map());
+  // Tracks the date window that is already in the cache [epoch ms start, end].
+  const fetchedWindowRef = useRef<{ start: number; end: number; at: number } | null>(null);
+  // Set after the first version poll so we don't double-fetch on mount.
+  const initialVersionSetRef = useRef(false);
   const [calendars, setCalendars] = useState<CalendarSummary[]>([]);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [view, setView] = useState<CalendarView>("timeGridWeek");
-  const [range, setRange] = useState<{ start: string; end: string }>({
-    start: new Date().toISOString(),
-    end: new Date(Date.now() + 1000 * 60 * 60 * 24 * 40).toISOString()
+  // Initialize to the current week so the first readEvents fetch matches
+  // what FullCalendar renders, avoiding a redundant double-fetch on mount.
+  const [range, setRange] = useState<{ start: string; end: string }>(() => {
+    const now = new Date();
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - now.getDay()); // Sunday
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 7);
+    return { start: weekStart.toISOString(), end: weekEnd.toISOString() };
   });
+  const [calendarTitle, setCalendarTitle] = useState("");
+  const [navDirection, setNavDirection] = useState<"prev" | "next" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [eventEditorOpen, setEventEditorOpen] = useState(false);
@@ -126,73 +215,208 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
   /* ── milindDocs elastic scroll ── */
   const workspaceRef = useRef<HTMLElement | null>(null);
   const [docsVisible, setDocsVisible] = useState(false);
+  const [hasMountedDocs, setHasMountedDocs] = useState(false);
+
+  useEffect(() => {
+    // Pre-warm docs editor off-screen on next idle frame
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      requestIdleCallback(() => setHasMountedDocs(true));
+    } else {
+      setTimeout(() => setHasMountedDocs(true), 2000);
+    }
+  }, []);
+
+  /* When the store flags a doc to open (via openAsDoc from any view) and the
+   * docs panel is closed, raise it so MilindDocsSection can consume the id. */
+  useEffect(() => {
+    if (pendingOpenDocId && !docsVisible) openDocs();
+  // openDocs is intentionally omitted — it depends on docsVisible and is stable enough
+  // for this single-shot raise-on-pending behavior.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingOpenDocId, docsVisible]);
   const [docsExitMode, setDocsExitMode] = useState<"normal" | "to-calendar">("normal");
   const [editorEntranceFrom, setEditorEntranceFrom] = useState<"side" | "doc">("side");
   const docPendingTitleRef = useRef<string>("");
   const docPendingDescriptionRef = useRef<string>("");
+  // Populated when a task is dragged from the sidebar and dropped onto the calendar
+  const taskDropTitleRef = useRef<string>("");
+  const taskDropDescriptionRef = useRef<string>("");
   const wheelAccRef = useRef(0);
   const stretchResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDocsAnimatingRef = useRef(false);
-  const calendarStretchY = useMotionValue(0);
-  const SNAP_THRESHOLD = 220;
-  const MAX_STRETCH = 56;
+  const SNAP_THRESHOLD = 180;
+  const MAX_STRETCH = 44;
+
+  // ── Single unified "dive" progress. 0 = calendar, 1 = docs. ──
+  // We animate the motion value directly with `animate()` rather than
+  // chaining through useSpring, which in framer-motion 11 can drop updates
+  // when its internal effect re-runs.
+  const dive = useMotionValue(0);
+  const diveAnimRef = useRef<ReturnType<typeof animate> | null>(null);
+  const driveDive = useCallback((to: number) => {
+    diveAnimRef.current?.stop();
+    diveAnimRef.current = animate(dive, to, {
+      type: "spring",
+      stiffness: DIVE_SPRING.stiffness,
+      damping: DIVE_SPRING.damping,
+      mass: DIVE_SPRING.mass,
+    });
+  }, [dive]);
+
+  // Small pre-snap elastic offsets — one per side. Pure transform, no filters.
+  const calStretch = useMotionValue(0);
+  const calStretchAnimRef = useRef<ReturnType<typeof animate> | null>(null);
+  const driveCalStretch = useCallback((to: number) => {
+    calStretchAnimRef.current?.stop();
+    calStretchAnimRef.current = animate(calStretch, to, {
+      type: "spring",
+      stiffness: STRETCH_SPRING.stiffness,
+      damping: STRETCH_SPRING.damping,
+      mass: STRETCH_SPRING.mass,
+    });
+  }, [calStretch]);
+
+  const docsStretch = useMotionValue(0);
+  const docsStretchAnimRef = useRef<ReturnType<typeof animate> | null>(null);
+  const driveDocsStretch = useCallback((to: number) => {
+    docsStretchAnimRef.current?.stop();
+    docsStretchAnimRef.current = animate(docsStretch, to, {
+      type: "spring",
+      stiffness: STRETCH_SPRING.stiffness,
+      damping: STRETCH_SPRING.damping,
+      mass: STRETCH_SPRING.mass,
+    });
+  }, [docsStretch]);
+
+  const windowHeight = typeof window !== "undefined" ? window.innerHeight : 800;
+
+  // Docs transforms — Y = (1 - dive) * windowHeight + docsStretch
+  const docsY = useTransform<number, number>([dive, docsStretch], ([d, s]) => (1 - Number(d)) * windowHeight + Number(s));
+  const docsScale = useTransform(dive, [0, 1], [0.98, 1]);
+  const docsOpacity = useTransform(dive, [0, 0.08, 1], [0, 1, 1]);
+
+  // Calendar transforms — scale/opacity retreat as dive grows; tiny anticipation on cal-side stretch.
+  const calendarScale = useTransform<number, number>([dive, calStretch], ([d, s]) => {
+    const retreat = 1 - Number(d) * 0.035;
+    const anticipation = 1 + Number(s) * 0.0003;
+    return retreat * anticipation;
+  });
+  const calendarY = useTransform(calStretch, [-MAX_STRETCH, 0], [-4, 0]);
+  const calendarOpacity = useTransform(dive, [0, 1], [1, 0.5]);
+
+  // Orb ambient (keep subtle parallax on open)
+  const orbBlur = useTransform(dive, [0, 1], ["0px", "20px"]);
+  const orbOpacity = useTransform(dive, [0, 1], [0.8, 0.1]);
+
+  const clearStretchTimer = () => {
+    if (stretchResetTimerRef.current) {
+      clearTimeout(stretchResetTimerRef.current);
+      stretchResetTimerRef.current = null;
+    }
+  };
+
+  const openDocs = useCallback(() => {
+    if (isDocsAnimatingRef.current || docsVisible) return;
+    clearStretchTimer();
+    wheelAccRef.current = 0;
+    driveCalStretch(0);
+    driveDocsStretch(0);
+    isDocsAnimatingRef.current = true;
+    setDocsVisible(true);
+    driveDive(1);
+    setTimeout(() => { isDocsAnimatingRef.current = false; }, 380);
+  }, [driveCalStretch, driveDive, driveDocsStretch, docsVisible]);
+
+  const closeDocs = useCallback(() => {
+    if (isDocsAnimatingRef.current || !docsVisible) return;
+    clearStretchTimer();
+    wheelAccRef.current = 0;
+    driveCalStretch(0);
+    driveDocsStretch(0);
+    isDocsAnimatingRef.current = true;
+    setDocsVisible(false);
+    driveDive(0);
+    setTimeout(() => { isDocsAnimatingRef.current = false; }, 380);
+  }, [driveCalStretch, driveDive, driveDocsStretch, docsVisible]);
 
   useEffect(() => {
     const el = workspaceRef.current;
     if (!el) return;
 
     const onWheel = (e: WheelEvent) => {
-      if (isDocsAnimatingRef.current || docsVisible) return;
+      if (isDocsAnimatingRef.current) return;
 
       const target = e.target as HTMLElement;
-      // Let FullCalendar's internal scroller handle its own wheel events
-      if (target.closest(".fc-scroller") || target.closest(".fc-timegrid-body")) return;
 
-      if (e.deltaY > 0) {
-        e.preventDefault();
-        wheelAccRef.current = Math.min(wheelAccRef.current + e.deltaY, SNAP_THRESHOLD * 1.4);
-        const progress = Math.min(wheelAccRef.current / SNAP_THRESHOLD, 1);
-        calendarStretchY.set(-progress * MAX_STRETCH * 0.55);
+      if (!docsVisible) {
+        // ── CAL → DOCS: scroll-down past calendar ──
+        if (target.closest(".fc-scroller") || target.closest(".fc-timegrid-body")) return;
+        if (e.deltaY > 0) {
+          e.preventDefault();
+          wheelAccRef.current = Math.min(wheelAccRef.current + e.deltaY * 0.55, SNAP_THRESHOLD * 1.25);
+          const p = Math.min(wheelAccRef.current / SNAP_THRESHOLD, 1);
+          driveCalStretch(-p * MAX_STRETCH);
 
-        // Reset accumulator if user pauses scrolling
-        if (stretchResetTimerRef.current) clearTimeout(stretchResetTimerRef.current);
-        stretchResetTimerRef.current = setTimeout(() => {
+          clearStretchTimer();
+          stretchResetTimerRef.current = setTimeout(() => {
+            wheelAccRef.current = 0;
+            driveCalStretch(0);
+          }, 240);
+
+          if (wheelAccRef.current >= SNAP_THRESHOLD) openDocs();
+        } else {
           wheelAccRef.current = 0;
-          void animate(calendarStretchY, 0, { type: "spring", stiffness: 360, damping: 24 });
-        }, 180);
-
-        if (wheelAccRef.current >= SNAP_THRESHOLD) {
-          // ── SNAP TO DOCS ──
-          if (stretchResetTimerRef.current) clearTimeout(stretchResetTimerRef.current);
-          wheelAccRef.current = 0;
-          isDocsAnimatingRef.current = true;
-          // Quick overshoot then reset before docs flies in
-          void animate(calendarStretchY, -MAX_STRETCH * 1.1, {
-            type: "spring", stiffness: 360, damping: 18,
-            onComplete: () => {
-              void animate(calendarStretchY, 0, { duration: 0 });
-              setDocsVisible(true);
-              setTimeout(() => { isDocsAnimatingRef.current = false; }, 700);
-            },
-          });
+          driveCalStretch(0);
         }
       } else {
-        wheelAccRef.current = 0;
-        if (!isDocsAnimatingRef.current) {
-          void animate(calendarStretchY, 0, { type: "spring", stiffness: 360, damping: 24 });
+        // ── DOCS → CAL: scroll-up past top of editor column ──
+        const editorCol = target.closest(".docs-editor-col") as HTMLElement | null;
+        if (!editorCol) return;
+        if (editorCol.scrollTop > 0) return;
+
+        if (e.deltaY < 0) {
+          e.preventDefault();
+          wheelAccRef.current = Math.min(wheelAccRef.current + Math.abs(e.deltaY) * 0.55, SNAP_THRESHOLD * 1.25);
+          const p = Math.min(wheelAccRef.current / SNAP_THRESHOLD, 1);
+          driveDocsStretch(p * MAX_STRETCH);
+
+          clearStretchTimer();
+          stretchResetTimerRef.current = setTimeout(() => {
+            wheelAccRef.current = 0;
+            driveDocsStretch(0);
+          }, 240);
+
+          if (wheelAccRef.current >= SNAP_THRESHOLD) closeDocs();
+        } else {
+          wheelAccRef.current = 0;
+          driveDocsStretch(0);
         }
       }
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [docsVisible, calendarStretchY]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docsVisible, openDocs, closeDocs]);
 
-  const closeDocs = useCallback(() => {
-    isDocsAnimatingRef.current = true;
-    setDocsVisible(false);
-    setTimeout(() => { isDocsAnimatingRef.current = false; }, 700);
-  }, []);
+  useEffect(() => {
+    const handleGlobalKeydown = (e: KeyboardEvent) => {
+      if (e.key === "d" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        if (docsVisible) closeDocs(); else openDocs();
+      } else if (e.key === "Escape" && docsVisible) {
+        e.preventDefault();
+        closeDocs();
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeydown);
+    return () => window.removeEventListener("keydown", handleGlobalKeydown);
+  }, [docsVisible, openDocs, closeDocs]);
+
+  /* FC's external Draggable was removed when we unified on dnd-kit — tasks
+   * and docs now drop onto the calendar via the universal drag layer. The
+   * calendar wrapper registers itself as a dnd-kit droppable below. */
 
   const handleDocAddToCalendar = useCallback((title: string, description: string) => {
     docPendingTitleRef.current = title;
@@ -218,10 +442,230 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
 
   const handleSendNoteToCanvas = useCallback((_note: PanelNote) => {
     closeDocs();
-    // Give docs overlay time to exit, then switch to canvas
-    setTimeout(() => changeView("nodeCanvas"), 420);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Give docs overlay time to exit, then switch to canvas.
+    // nodeCanvas is a local-only view so setView is all that's needed.
+    setTimeout(() => setView("nodeCanvas"), 420);
   }, [closeDocs]);
+
+  const handleSyncEventDescription = useCallback(async (
+    eventId: string,
+    calendarId: string,
+    description: string,
+    eventPayload: { title: string; start: string; end: string; location: string; allDay: boolean }
+  ) => {
+    try {
+      await fetch(`/api/google/events/${eventId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          calendarId,
+          event: {
+            title: eventPayload.title,
+            description,
+            location: eventPayload.location,
+            start: eventPayload.start,
+            end: eventPayload.end,
+            allDay: eventPayload.allDay,
+            attendees: [],
+            recurrence: [],
+            reminders: { useDefault: true, overrides: [] },
+            eventType: "meeting",
+            colorId: "9",
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          },
+        }),
+      });
+    } catch { /* ignore sync errors silently */ }
+  }, []);
+
+  const [pendingCalendarDoc, setPendingCalendarDoc] = useState<MilindDocFile | null>(null);
+
+  const handleConvertToDoc = useCallback((event: CalendarEvent) => {
+    const doc: MilindDocFile = {
+      id: Math.random().toString(36).slice(2, 10),
+      title: event.title,
+      content: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      links: [],
+      calendarMeta: {
+        eventId: event.id,
+        calendarId: event.calendarId,
+        title: event.title,
+        start: event.start,
+        end: event.end,
+        description: event.description,
+        location: event.location,
+        allDay: event.allDay,
+      },
+    };
+    setPendingCalendarDoc(doc);
+    setEventEditorOpen(false);
+    openDocs();
+  }, [openDocs]);
+
+  /* ── Calendar event label resolver ──
+   *
+   * Events live outside the EntityStore (Google owns them). Publish a
+   * resolver so the store can render event titles in backlink chips.
+   */
+  useEffect(() => {
+    const resolver = (id: string): string | undefined => {
+      const parsed = parseEventId(id);
+      if (!parsed) return undefined;
+      return events.find((e) => e.id === parsed.eventId && e.calendarId === parsed.calendarId)?.title;
+    };
+    return registerLabelResolver("event", resolver);
+  }, [events, registerLabelResolver]);
+
+  /* ── Universal drop router ──
+   *
+   * Every cross-container drag in the app funnels through here. The source
+   * payload and target-zone metadata together decide what to do: create a
+   * new entity of the target kind, link the two, and open the right editor.
+   *
+   * Same-kind drops (e.g. task → task column) are handled inside the
+   * individual sidebars so they can do sort-specific work. We ignore them.
+   *
+   * `events` is read through a ref so handleUniversalDrop stays referentially
+   * stable across polling-driven re-renders. A changing handler was churning
+   * the DndContext's onDragEnd prop, which can lose in-flight drops.
+   */
+  const eventsRef = useRef(events);
+  useEffect(() => { eventsRef.current = events; });
+
+  const handleUniversalDrop = useCallback(
+    (evt: UniversalDropEvent) => {
+      const { source, target } = evt;
+      const sourceKey: EntityKey = source.kind === "event" && source.calendarId
+        ? eventKey(source.calendarId, source.id)
+        : entityKey(source.kind, source.id);
+
+      // Same-kind drops are reorder/move intents handled by the sidebar itself.
+      if (source.kind === target.targetKind) return;
+
+      /* ── task → event ───────────────────────── */
+      if (source.kind === "task" && target.targetKind === "event") {
+        taskDropTitleRef.current = source.label || "Untitled";
+        taskDropDescriptionRef.current = source.description ?? "";
+        // Reset in case a prior doc→event drop left it on "doc".
+        setEditorEntranceFrom("side");
+        setEditingEvent(null);
+        // Use a slot hint from target.data if provided, else default to now
+        const slotStart = typeof target.data?.start === "string"
+          ? target.data.start as string
+          : new Date().toISOString();
+        const slotEnd = typeof target.data?.end === "string"
+          ? target.data.end as string
+          : new Date(new Date(slotStart).getTime() + 60 * 60 * 1000).toISOString();
+        setDraftWindow({ start: slotStart, end: slotEnd });
+        setEventEditorOpen(true);
+        // Link is added once the event is actually created (eventEditor → createEvent).
+        // For now we stash the source key so the create handler can attach it.
+        pendingLinkSourceRef.current = sourceKey;
+        return;
+      }
+
+      /* ── doc → event ────────────────────────── */
+      if (source.kind === "doc" && target.targetKind === "event") {
+        docPendingTitleRef.current = source.label || "Untitled";
+        docPendingDescriptionRef.current = source.description ?? "";
+        setEditingEvent(null);
+        const slotStart = typeof target.data?.start === "string"
+          ? target.data.start as string
+          : new Date().toISOString();
+        const slotEnd = typeof target.data?.end === "string"
+          ? target.data.end as string
+          : new Date(new Date(slotStart).getTime() + 60 * 60 * 1000).toISOString();
+        setDraftWindow({ start: slotStart, end: slotEnd });
+        setEditorEntranceFrom("doc");
+        setEventEditorOpen(true);
+        pendingLinkSourceRef.current = sourceKey;
+        return;
+      }
+
+      /* ── event → task ───────────────────────── */
+      if (source.kind === "event" && target.targetKind === "task") {
+        const ev = source.calendarId
+          ? eventsRef.current.find((e) => e.id === source.id && e.calendarId === source.calendarId)
+          : undefined;
+        const newTask: Task = {
+          id: Math.random().toString(36).slice(2, 10),
+          title: source.label || ev?.title || "Untitled",
+          description: source.description ?? ev?.description ?? "",
+          completed: false,
+          createdAt: Date.now(),
+          importance: "medium",
+          columnId: typeof target.data?.columnId === "string" ? target.data.columnId as string : undefined,
+          dueDate: ev?.start ? ev.start.slice(0, 10) : undefined,
+        };
+        addTask(newTask);
+        link(sourceKey, entityKey("task", newTask.id));
+        return;
+      }
+
+      /* ── doc → task ─────────────────────────── */
+      if (source.kind === "doc" && target.targetKind === "task") {
+        const newTask: Task = {
+          id: Math.random().toString(36).slice(2, 10),
+          title: source.label || "Untitled",
+          description: source.description ?? "",
+          completed: false,
+          createdAt: Date.now(),
+          importance: "medium",
+          columnId: typeof target.data?.columnId === "string" ? target.data.columnId as string : undefined,
+        };
+        addTask(newTask);
+        link(sourceKey, entityKey("task", newTask.id));
+        return;
+      }
+
+      /* ── event → doc ────────────────────────── */
+      if (source.kind === "event" && target.targetKind === "doc") {
+        const ev = source.calendarId
+          ? eventsRef.current.find((e) => e.id === source.id && e.calendarId === source.calendarId)
+          : undefined;
+        if (!ev) return;
+        handleConvertToDoc(ev);
+        // handleConvertToDoc already sets pendingCalendarDoc; the resulting
+        // doc will have calendarMeta pointing back at this event, giving us
+        // a two-way association without an extra link edge.
+        return;
+      }
+
+      /* ── task → doc ─────────────────────────── */
+      if (source.kind === "task" && target.targetKind === "doc") {
+        const newDoc: MilindDocFile = {
+          id: Math.random().toString(36).slice(2, 10),
+          title: source.label || "Untitled",
+          content: source.description
+            ? {
+                type: "doc",
+                content: [{ type: "paragraph", content: [{ type: "text", text: source.description }] }],
+              }
+            : null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          links: [],
+        };
+        addDoc(newDoc);
+        link(sourceKey, entityKey("doc", newDoc.id));
+        openDocs();
+        return;
+      }
+    },
+    // All mutable entity state is accessed via refs (eventsRef) or stable
+    // callbacks (addDoc, addTask, link, handleConvertToDoc). This keeps
+    // handleUniversalDrop referentially stable across polling re-renders so
+    // DndContext's onDragEnd handler doesn't churn mid-drag.
+    [addDoc, addTask, handleConvertToDoc, link, openDocs],
+  );
+
+  /** Set by handleUniversalDrop when a task/doc is dropped onto the calendar
+   *  grid, then consumed inside the createEvent flow to add a link edge from
+   *  the source entity to the newly-created event. */
+  const pendingLinkSourceRef = useRef<EntityKey | null>(null);
+
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [taskBoardExpanded, setTaskBoardExpanded] = useState(false);
   const filterPanelRef = useRef<HTMLDivElement | null>(null);
@@ -254,7 +698,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
     }
   }, []);
 
-  const readEvents = useCallback(async (options?: { silent?: boolean }) => {
+  const readEvents = useCallback(async (options?: { silent?: boolean; force?: boolean }) => {
     readEventsAbortRef.current?.abort();
     const controller = new AbortController();
     readEventsAbortRef.current = controller;
@@ -264,15 +708,35 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
       return;
     }
 
+    const visStartMs = new Date(range.start).getTime();
+    const visEndMs   = new Date(range.end).getTime();
+    const now        = Date.now();
+
+    // ── Cache hit ──────────────────────────────────────────────────────────
+    // Skip the network round-trip when the visible range is fully covered by
+    // a recent fetch. This makes navigating pre-fetched weeks instant.
+    if (!options?.force) {
+      const win = fetchedWindowRef.current;
+      if (win && win.start <= visStartMs && win.end >= visEndMs && now - win.at < CACHE_TTL_MS) {
+        return;
+      }
+    }
+
+    // ── Expanded fetch range ───────────────────────────────────────────────
+    // Fetch more than what's visible so adjacent weeks are ready immediately.
+    const fetchStart = new Date(visStartMs - PREFETCH_BEFORE_MS);
+    const fetchEnd   = new Date(visEndMs   + PREFETCH_AFTER_MS);
+
     if (!options?.silent) {
       setLoading(true);
+      setError(null);
     }
 
     try {
       const query = new URLSearchParams({
         calendarIds: selectedCalendarIds.join(","),
-        timeMin: range.start,
-        timeMax: range.end
+        timeMin: fetchStart.toISOString(),
+        timeMax: fetchEnd.toISOString()
       });
 
       const response = await fetch(`/api/google/events?${query.toString()}`, { signal: controller.signal });
@@ -282,7 +746,57 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
       }
 
       const data = (await response.json()) as { events: CalendarEvent[]; failedCalendarIds?: string[] };
-      setEvents(data.events);
+
+      // ── Merge into cache ───────────────────────────────────────────────
+      // Evict any stale entries in the fetched window, then insert fresh ones.
+      // Events outside the window are untouched, so the cache only grows.
+      const fs = fetchStart.getTime();
+      const fe = fetchEnd.getTime();
+      let changed = false;
+      const newKeys = new Set(data.events.map(ev => `${ev.calendarId}::${ev.id}`));
+
+      // Identify deletions
+      for (const [key, ev] of eventsCacheRef.current) {
+        const evMs = new Date(ev.start).getTime();
+        if (evMs >= fs && evMs < fe) {
+          if (!newKeys.has(key)) {
+            eventsCacheRef.current.delete(key);
+            changed = true;
+          }
+        }
+      }
+
+      // Identify insertions and updates. Prefer Google's per-event etag for an
+      // O(1) change check; fall back to comparing the fields the calendar
+      // actually renders when either side lacks an etag (shouldn't normally
+      // happen). The previous fallback stringified both objects, which on a
+      // busy month meant thousands of allocations per poll for a comparison
+      // that only a handful of fields can affect.
+      for (const ev of data.events) {
+        const key = `${ev.calendarId}::${ev.id}`;
+        const existing = eventsCacheRef.current.get(key);
+        const isChanged = !existing
+          || (existing.etag && ev.etag
+                ? existing.etag !== ev.etag
+                : isRenderedEventChanged(existing, ev));
+        if (isChanged) {
+          eventsCacheRef.current.set(key, ev);
+          changed = true;
+        }
+      }
+
+      // Expand the known-good window to include what was just fetched.
+      const prev = fetchedWindowRef.current;
+      fetchedWindowRef.current = {
+        start: Math.min(fs, prev?.start ?? fs),
+        end:   Math.max(fe, prev?.end   ?? fe),
+        at:    now
+      };
+
+      if (changed || eventsCacheRef.current.size !== events.length) {
+        setEvents(Array.from(eventsCacheRef.current.values()));
+      }
+
       if ((data.failedCalendarIds ?? []).length) {
         setSyncWarning(`Some calendars failed to sync: ${data.failedCalendarIds?.join(", ")}`);
       } else {
@@ -317,6 +831,13 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
   );
 
   const watchKey = selectedForSync.join(",");
+
+  // Clear the event cache whenever the selected calendar set changes so events
+  // from deselected calendars don't linger in the view.
+  useEffect(() => {
+    eventsCacheRef.current.clear();
+    fetchedWindowRef.current = null;
+  }, [watchKey]);
 
   useEffect(() => {
     let active = true;
@@ -362,18 +883,30 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
     };
 
     void startWatch();
+
+    // Renewal only matters for a tab that's still being looked at; a hidden
+    // tab re-registers on its next visible tick instead. Google channels last
+    // well beyond this interval, so skipping a hidden renewal is safe.
     const renewTimer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void startWatch();
     }, 25 * 60 * 1000);
+
+    const onVisibleRenew = () => {
+      if (document.visibilityState === "visible") void startWatch();
+    };
+    document.addEventListener("visibilitychange", onVisibleRenew);
 
     return () => {
       active = false;
       window.clearInterval(renewTimer);
+      document.removeEventListener("visibilitychange", onVisibleRenew);
     };
   }, [watchKey, selectedForSync]);
 
   useEffect(() => {
     const pollVersion = async () => {
+      if (isDocsAnimatingRef.current) return;
       try {
         const response = await fetch("/api/google/watch/version", {
           cache: "no-store"
@@ -388,9 +921,14 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
           return;
         }
 
-        if (data.version > syncVersionRef.current) {
+        if (!initialVersionSetRef.current) {
+          // First poll: record the baseline so we don't immediately re-fetch
+          // data we already loaded on mount.
           syncVersionRef.current = data.version;
-          await readEventsRef.current({ silent: true });
+          initialVersionSetRef.current = true;
+        } else if (data.version > syncVersionRef.current) {
+          syncVersionRef.current = data.version;
+          await readEventsRef.current({ silent: true, force: true });
         }
       } catch {
         // Keep silent when poll fails. Manual and timed refresh still work.
@@ -403,10 +941,17 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
       }
     };
 
-    void pollVersion();
+    // Only poll while the tab is actually visible. A backgrounded tab has
+    // nothing to repaint, and each tick costs a JWT decrypt plus a KV read on
+    // the server. `onVisible` fires an immediate catch-up poll the moment the
+    // tab comes back, so nothing is missed by staying quiet in between.
+    if (document.visibilityState === "visible") void pollVersion();
+
+    const intervalMs = liveSyncMode === "live" ? 15_000 : 60_000;
     const versionTimer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void pollVersion();
-    }, liveSyncMode === "live" ? 15_000 : 60_000);
+    }, intervalMs);
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
@@ -430,37 +975,55 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
     [events]
   );
 
-  const changeView = (nextView: CalendarView) => {
+  const changeView = useCallback((nextView: CalendarView) => {
     setView(nextView);
     if (nextView !== "nodeCanvas") {
       calendarRef.current?.getApi().changeView(nextView);
     }
-  };
+  }, []);
 
   const onDatesSet = useCallback((args: DatesSetArg) => {
     setRange({
       start: args.start.toISOString(),
       end: args.end.toISOString()
     });
+    setCalendarTitle(args.view.title);
   }, []);
 
-  const onSelectRange = (selection: any) => {
+  const navigateCalendar = useCallback((action: "prev" | "next" | "today") => {
+    const api = calendarRef.current?.getApi();
+    if (!api) return;
+    if (action === "prev") {
+      setNavDirection("prev");
+      api.prev();
+    } else if (action === "next") {
+      setNavDirection("next");
+      api.next();
+    } else {
+      setNavDirection(null);
+      api.today();
+    }
+    // Clear direction after animation
+    setTimeout(() => setNavDirection(null), 400);
+  }, []);
+
+  const onSelectRange = useCallback((selection: DateSelectArg) => {
     setEditingEvent(null);
     setDraftWindow({
       start: selection.startStr,
       end: selection.endStr
     });
     setEventEditorOpen(true);
-  };
+  }, []);
 
-  const openNewEvent = () => {
+  const openNewEvent = useCallback(() => {
     setEditingEvent(null);
     setDraftWindow({
       start: new Date().toISOString(),
       end: new Date(Date.now() + 60 * 60 * 1000).toISOString()
     });
     setEventEditorOpen(true);
-  };
+  }, []);
 
   const onEventClick = (eventClick: EventClickArg) => {
     const sep = eventClick.event.id.indexOf("::");
@@ -470,9 +1033,18 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
     const found = events.find((event) => event.id === eventId && event.calendarId === calendarId);
     if (!found) return;
 
+    // Open editor immediately with cached data
     setEditingEvent(found);
     setDraftWindow({});
     setEventEditorOpen(true);
+
+    // Fresh-fetch to get up-to-date event data and replace stale cache
+    void fetch(`/api/google/events/${eventId}?calendarId=${encodeURIComponent(calendarId)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data: { event: CalendarEvent } | null) => {
+        if (data?.event) setEditingEvent(data.event);
+      })
+      .catch(() => undefined);
   };
 
   const closeExpandedDay = useCallback(() => {
@@ -481,12 +1053,12 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
     setExpandedAnchorRect(null);
   }, []);
 
-  const onMoreLinkClick = useCallback((info: any) => {
+  const onMoreLinkClick = useCallback((info: MoreLinkArg) => {
     const dateStr = (info.date as Date).toISOString().split("T")[0];
 
     if (expandedDate === dateStr) {
       closeExpandedDay();
-      return "none";
+      return "none" as const;
     }
 
     const target = info.jsEvent?.target as HTMLElement | null;
@@ -496,8 +1068,8 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
     }
 
     const seen = new Set<string>();
-    const dayEvents = (info.allSegs as any[])
-      .map((seg: any) => {
+    const dayEvents = (info.allSegs as Array<{ event: { id: string } }>)
+      .map((seg) => {
         const id = seg.event.id as string;
         const sep = id.indexOf("::");
         if (sep === -1) return null;
@@ -521,6 +1093,51 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
   const moreLinkContent = useCallback((info: { num: number }) => {
     return `${info.num}+ more`;
   }, []);
+
+  /* Calendar is a drop target for tasks / docs. The drop router picks the
+   * time slot from target.data; we leave it undefined here so it defaults
+   * to "now → now + 1h" and the editor opens for fine-tuning. */
+  const calendarDroppable = useUniversalDroppable({
+    id: "calendar",
+    targetKind: "event",
+  });
+
+  /** Stable ref-setter for the calendar frame — forwards to both our local
+   *  ref (used by the shy-cursor effect) and dnd-kit's droppable registration.
+   *  An inline callback here would cause React to run it with (null, node) on
+   *  every render, which would thrash dnd-kit's droppable registry. */
+  const setCalendarFrameNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      calendarFrameRef.current = node;
+      calendarDroppable.setNodeRef(node);
+    },
+    [calendarDroppable],
+  );
+
+  /* Render each calendar event with our own tile (title + time + drag handle).
+   * FC keeps its tile chrome; we replace the inner body so the drag-handle
+   * becomes a dnd-kit draggable for cross-view drops. */
+  const eventsById = useMemo(() => {
+    const map = new Map<string, CalendarEvent>();
+    for (const ev of events) map.set(`${ev.calendarId}::${ev.id}`, ev);
+    return map;
+  }, [events]);
+
+  const renderEventContent = useCallback((arg: EventContentArg) => {
+    const ev = eventsById.get(arg.event.id);
+    if (!ev) {
+      // Fall back to default text when we can't resolve (e.g. external drop preview)
+      return <div className="fc-event-tile-inner"><span className="fc-event-tile-title">{arg.event.title}</span></div>;
+    }
+    return (
+      <CalendarEventTile
+        event={ev}
+        timeText={arg.timeText}
+        isStart={arg.isStart}
+        allDay={arg.event.allDay}
+      />
+    );
+  }, [eventsById]);
 
   useEffect(() => {
     if (!expandedDate) return;
@@ -571,76 +1188,10 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
     return () => window.clearTimeout(timer);
   }, [taskBoardExpanded]);
 
-  // Shy cursor effect: events recoil from proximity, near side shrinks inward
-  useEffect(() => {
-    const container = calendarFrameRef.current;
-    if (!container) return;
-
-    let rafId: number | null = null;
-
-    const apply = (e: MouseEvent) => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        const { clientX: cx, clientY: cy } = e;
-        const THRESHOLD = 100;
-        const MAX_FACTOR = 0.08;
-
-        container.querySelectorAll<HTMLElement>(".fc-event").forEach((el) => {
-          const r = el.getBoundingClientRect();
-          const nearX = Math.max(r.left, Math.min(cx, r.right));
-          const nearY = Math.max(r.top, Math.min(cy, r.bottom));
-          const dist = Math.hypot(cx - nearX, cy - nearY);
-
-          el.style.transition = "none";
-
-          if (dist >= THRESHOLD) {
-            el.style.transform = "";
-            el.style.transformOrigin = "";
-            return;
-          }
-
-          const t = 1 - dist / THRESHOLD;
-          const scale = 1 - t * MAX_FACTOR;
-
-          // Angle from event center to cursor; origin placed opposite (far side)
-          const rcx = (r.left + r.right) / 2;
-          const rcy = (r.top + r.bottom) / 2;
-          const angle = Math.atan2(cy - rcy, cx - rcx);
-          const ox = 50 + Math.cos(angle + Math.PI) * 50;
-          const oy = 50 + Math.sin(angle + Math.PI) * 50;
-
-          // Tiny scoot away from cursor (max 2px)
-          const moveX = Math.cos(angle + Math.PI) * t * 2;
-          const moveY = Math.sin(angle + Math.PI) * t * 2;
-
-          el.style.transformOrigin = `${ox.toFixed(1)}% ${oy.toFixed(1)}%`;
-          el.style.transform = `translate(${moveX.toFixed(2)}px, ${moveY.toFixed(2)}px) scale(${scale.toFixed(4)})`;
-        });
-      });
-    };
-
-    const reset = () => {
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-      }
-      container.querySelectorAll<HTMLElement>(".fc-event").forEach((el) => {
-        el.style.transition = "transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)";
-        el.style.transform = "";
-        el.style.transformOrigin = "";
-      });
-    };
-
-    container.addEventListener("mousemove", apply);
-    container.addEventListener("mouseleave", reset);
-
-    return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      container.removeEventListener("mousemove", apply);
-      container.removeEventListener("mouseleave", reset);
-    };
-  }, [view]);
+  // Shy-cursor hover effect was removed — it wrote inline transforms to every
+  // visible .fc-event on every mousemove inside the calendar, which was
+  // visibly janking pointer input on larger weeks. The cursor-trail dot alone
+  // is enough of a cursor-tracking flourish.
 
   const dayHeaderContent = useCallback((args: { date: Date; text: string; isToday: boolean }) => {
     const { date, text, isToday } = args;
@@ -675,7 +1226,21 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
         throw new Error("Unable to save event");
       }
 
-      await readEvents({ silent: true });
+      // If this event was created from a dropped task/doc, attach the back-link
+      // to the newly-created event so backlinks panels find it.
+      if (!eventId && pendingLinkSourceRef.current) {
+        try {
+          const body = await response.clone().json() as { event?: { id?: string; calendarId?: string } };
+          const createdId = body.event?.id;
+          const createdCal = body.event?.calendarId ?? calendarId;
+          if (createdId) {
+            link(pendingLinkSourceRef.current, eventKey(createdCal, createdId));
+          }
+        } catch { /* body wasn't JSON — skip link */ }
+        pendingLinkSourceRef.current = null;
+      }
+
+      await readEvents({ silent: true, force: true });
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save event");
       throw saveError;
@@ -684,7 +1249,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
 
   const deleteEvent = async (event: CalendarEvent) => {
     try {
-      const response = await fetch(`/api/google/events/${event.id}?calendarId=${event.calendarId}`, {
+      const response = await fetch(`/api/google/events/${encodeURIComponent(event.id)}?calendarId=${encodeURIComponent(event.calendarId)}`, {
         method: "DELETE"
       });
 
@@ -693,14 +1258,14 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
       }
 
       setEventEditorOpen(false);
-      await readEvents({ silent: true });
+      await readEvents({ silent: true, force: true });
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "Unable to delete event");
       throw deleteError;
     }
   };
 
-  const updateMovedOrResizedEvent = async (change: any) => {
+  const updateMovedOrResizedEvent = async (change: EventChangeArg) => {
     const sep = change.event.id.indexOf("::");
     if (sep === -1) return;
     const calendarId = change.event.id.slice(0, sep);
@@ -724,23 +1289,27 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
     };
 
-    const response = await fetch(`/api/google/events/${eventId}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        calendarId,
-        event: nextPayload
-      })
-    });
+    try {
+      const response = await fetch(`/api/google/events/${encodeURIComponent(eventId)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          calendarId,
+          event: nextPayload
+        })
+      });
 
-    if (!response.ok) {
+      if (!response.ok) {
+        change.revert();
+        return;
+      }
+
+      await readEvents({ silent: true, force: true });
+    } catch {
       change.revert();
-      return;
     }
-
-    await readEvents({ silent: true });
   };
 
   const createCalendar = async (input: { summary: string; description: string; backgroundColor: string }) => {
@@ -768,42 +1337,51 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
   };
 
   return (
-    <main className={`workspace${taskBoardExpanded ? " task-board-open" : ""}`} ref={workspaceRef}>
-      <motion.div
-        animate={{
-          x: [0, 14, -8, 0],
-          y: [0, -12, 10, 0]
-        }}
-        className="ambient-orb orb-a"
-        transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        animate={{
-          x: [0, -20, 12, 0],
-          y: [0, 16, -8, 0]
-        }}
-        className="ambient-orb orb-b"
-        transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        animate={{
-          x: [0, 12, -16, 0],
-          y: [0, -8, 14, 0]
-        }}
-        className="ambient-orb orb-c"
-        transition={{ duration: 30, repeat: Infinity, ease: "easeInOut" }}
-      />
+    <LayoutGroup>
+    <UniversalDragLayer onDrop={handleUniversalDrop}>
+    <motion.main 
+      className={`workspace${taskBoardExpanded ? " task-board-open" : ""}`} 
+      ref={workspaceRef}
+      style={{
+        "--orb-blur": orbBlur,
+        "--orb-opacity": orbOpacity
+      } as React.CSSProperties}
+    >
+      {/* Orbs use pure CSS animations — no JS scheduler */}
+      <div className="ambient-orb orb-a" />
+      <div className="ambient-orb orb-b" />
+      <div className="ambient-orb orb-c" />
+
+      <AnimatePresence>
+        {driveAuthError && (
+          <motion.div
+            key="drive-auth-banner"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className="drive-auth-banner"
+          >
+            <AlertTriangle size={14} />
+            <span>milindDrive disconnected — your Google session expired.</span>
+            <button onClick={() => void signIn("google")} className="drive-auth-reconnect">
+              Reconnect
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <motion.section
         animate="show"
         className="calendar-shell"
         initial="hidden"
-        style={{ y: calendarStretchY }}
+        style={{ height: calendarHeight }}
         variants={shellVariants}
       >
+        <motion.div style={{ scale: calendarScale, y: calendarY, opacity: calendarOpacity, height: "100%", display: "flex", flexDirection: "column", minHeight: 0, transformOrigin: "50% 0%" }}>
         <header className="app-header">
           <motion.div className="header-identity" variants={itemVariants}>
-            <BrandMark compact showTagline={false} />
+            <BrandMark compact showTagline={false} layoutId="dive-app-brand" />
             <div className="header-meta">
               <span className="header-username">{userName.split(" ")[0]}'s calendar</span>
               <span className="header-sync-badge">
@@ -815,14 +1393,18 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
           <motion.div className="header-actions" variants={itemVariants}>
             <motion.button
               className="ghost-button"
-              onClick={() => void readEvents()}
+              onClick={() => {
+                eventsCacheRef.current.clear();
+                fetchedWindowRef.current = null;
+                void readEvents({ force: true });
+              }}
               transition={springTransition}
               type="button"
               whileHover={{ y: -2, scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
             >
               <RefreshCw size={15} />
-              Refresh
+              <span className="btn-label">Refresh</span>
             </motion.button>
             <motion.button
               className="ghost-button"
@@ -833,7 +1415,21 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
               whileTap={{ scale: 0.98 }}
             >
               <CalendarPlus size={15} />
-              New calendar
+              <span className="btn-label">New calendar</span>
+            </motion.button>
+            <motion.button
+              aria-label="Open milindDocs"
+              className="ghost-button docs-toggle-btn"
+              onClick={openDocs}
+              title="Open milindDocs  ⌘D"
+              transition={springTransition}
+              type="button"
+              whileHover={{ y: -2, scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <FileText size={15} />
+              <span className="btn-label">milindDocs</span>
+              <kbd className="kbd-hint">⌘D</kbd>
             </motion.button>
             <motion.button
               className="primary-button"
@@ -844,7 +1440,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
               whileTap={{ scale: 0.98 }}
             >
               <Sparkles size={15} />
-              New event
+              <span className="btn-label">New event</span>
             </motion.button>
             <AuthActions authenticated />
           </motion.div>
@@ -945,7 +1541,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
                 exit={{ opacity: 0, height: 0 }}
                 initial={{ opacity: 0, height: 0 }}
                 style={{ overflow: "hidden" }}
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                transition={{ duration: 0.22, ease: [0.25, 1, 0.5, 1] }}
               >
                 <div className="filter-panel">
                   {/* View section */}
@@ -953,7 +1549,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
                     <p className="filter-panel__section-label">
                       <span>View</span>
                     </p>
-                    <div className="view-switcher">
+                    <motion.div className="view-switcher" layoutId="dive-view-pill">
                       {VIEW_OPTIONS.map((item) => (
                         <motion.button
                           animate={view === item.value ? { scale: 1.02 } : { scale: 1 }}
@@ -972,7 +1568,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
                           {item.label}
                         </motion.button>
                       ))}
-                    </div>
+                    </motion.div>
                   </div>
 
                   {/* Calendars section */}
@@ -983,15 +1579,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
                         {selectedCalendarIds.length} of {calendars.length} active
                       </span>
                     </p>
-                    <motion.div
-                      animate="show"
-                      className="calendar-filter-row"
-                      initial="hidden"
-                      variants={{
-                        hidden: {},
-                        show: { transition: { staggerChildren: 0.05, delayChildren: 0.04 } }
-                      }}
-                    >
+                    <div className="calendar-filter-row">
                       {calendars.map((calendar) => (
                         <motion.button
                           className={selectedCalendarIds.includes(calendar.id) ? "selected" : ""}
@@ -1009,17 +1597,13 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
                           }}
                           transition={springTransition}
                           type="button"
-                          variants={{
-                            hidden: { opacity: 0, y: 8, scale: 0.95 },
-                            show: { opacity: 1, y: 0, scale: 1 }
-                          }}
                           whileHover={{ y: -2, scale: 1.02 }}
                           whileTap={{ scale: 0.96 }}
                         >
                           {calendar.summary}
                         </motion.button>
                       ))}
-                    </motion.div>
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -1030,13 +1614,74 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
 
         {isCanvasView ? null : (
           <motion.div
-            className={`calendar-frame ${loading ? "loading" : ""}`}
-            ref={calendarFrameRef}
+            className={`calendar-frame ${loading ? "loading" : ""}${calendarDroppable.isOver ? " universal-droppable--active" : ""}`}
+            ref={setCalendarFrameNode}
             style={{ height: "100%" }}
             transition={springTransition}
             variants={itemVariants}
-            whileHover={{ scale: 1.002 }}
           >
+            {/* Custom Calendar Navigation */}
+            <div className="cal-nav">
+              <div className="cal-nav__controls">
+                <motion.button
+                  className="cal-nav__btn cal-nav__btn--arrow"
+                  onClick={() => navigateCalendar("prev")}
+                  type="button"
+                  whileHover={{ scale: 1.12, x: -2 }}
+                  whileTap={{ scale: 0.88, x: -4 }}
+                  transition={{ type: "spring", stiffness: 500, damping: 15 }}
+                >
+                  <span className="cal-nav__btn-glow" />
+                  <span className="cal-nav__btn-surface">
+                    <ChevronLeft size={16} strokeWidth={2.5} />
+                  </span>
+                </motion.button>
+
+                <motion.button
+                  className="cal-nav__btn cal-nav__btn--arrow"
+                  onClick={() => navigateCalendar("next")}
+                  type="button"
+                  whileHover={{ scale: 1.12, x: 2 }}
+                  whileTap={{ scale: 0.88, x: 4 }}
+                  transition={{ type: "spring", stiffness: 500, damping: 15 }}
+                >
+                  <span className="cal-nav__btn-glow" />
+                  <span className="cal-nav__btn-surface">
+                    <ChevronRight size={16} strokeWidth={2.5} />
+                  </span>
+                </motion.button>
+
+                <motion.button
+                  className="cal-nav__btn cal-nav__btn--today"
+                  layoutId="dive-today-pill"
+                  onClick={() => navigateCalendar("today")}
+                  type="button"
+                  whileHover={{ scale: 1.06, y: -1 }}
+                  whileTap={{ scale: 0.94 }}
+                  transition={{ type: "spring", stiffness: 500, damping: 15 }}
+                >
+                  <span className="cal-nav__btn-glow" />
+                  <span className="cal-nav__btn-surface">
+                    <Circle size={6} fill="currentColor" strokeWidth={0} />
+                    <span>Today</span>
+                  </span>
+                </motion.button>
+              </div>
+
+              <AnimatePresence mode="wait">
+                <motion.h2
+                  className="cal-nav__title"
+                  key={calendarTitle}
+                  initial={{ opacity: 0, y: navDirection === "prev" ? -8 : navDirection === "next" ? 8 : 0, filter: "blur(4px)" }}
+                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                  exit={{ opacity: 0, y: navDirection === "prev" ? 8 : navDirection === "next" ? -8 : 0, filter: "blur(4px)" }}
+                  transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  {calendarTitle}
+                </motion.h2>
+              </AnimatePresence>
+            </div>
+
             <motion.div
               animate={{ opacity: 1, y: 0 }}
               initial={{ opacity: 0, y: 8 }}
@@ -1052,12 +1697,9 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
                 eventClick={onEventClick}
                 eventDrop={(arg) => void updateMovedOrResizedEvent(arg)}
                 eventResize={(arg) => void updateMovedOrResizedEvent(arg)}
+                eventContent={renderEventContent}
                 events={fullCalendarEvents}
-                headerToolbar={{
-                  left: "prev,next today",
-                  center: "title",
-                  right: ""
-                }}
+                headerToolbar={false}
                 height={calendarHeight}
                 initialView="timeGridWeek"
                 moreLinkClick={onMoreLinkClick}
@@ -1107,6 +1749,7 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
             </AnimatePresence>
           </motion.div>
         )}
+        </motion.div>
       </motion.section>
 
       <TasksSidebar onExpandChange={(expanded) => setTaskBoardExpanded(expanded)} />
@@ -1189,8 +1832,16 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
         defaultCalendarId={selectedCalendarIds[0]}
         defaultEnd={draftWindow.end}
         defaultStart={draftWindow.start}
-        defaultTitle={editorEntranceFrom === "doc" ? docPendingTitleRef.current : undefined}
-        defaultDescription={editorEntranceFrom === "doc" ? docPendingDescriptionRef.current : undefined}
+        defaultTitle={
+          editorEntranceFrom === "doc"
+            ? docPendingTitleRef.current
+            : taskDropTitleRef.current || undefined
+        }
+        defaultDescription={
+          editorEntranceFrom === "doc"
+            ? docPendingDescriptionRef.current
+            : taskDropDescriptionRef.current || undefined
+        }
         entranceFrom={editorEntranceFrom}
         initialEvent={editingEvent}
         onClose={() => {
@@ -1198,9 +1849,12 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
           setEditorEntranceFrom("side");
           docPendingTitleRef.current = "";
           docPendingDescriptionRef.current = "";
+          taskDropTitleRef.current = "";
+          taskDropDescriptionRef.current = "";
         }}
         onDelete={deleteEvent}
         onSubmit={saveEvent}
+        onConvertToDoc={handleConvertToDoc}
         open={eventEditorOpen}
       />
 
@@ -1297,40 +1951,30 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
         open={calendarDialogOpen}
       />
 
-      {/* ── milindDocs overlay — springs in from below ── */}
-      <AnimatePresence>
-        {docsVisible && (
-          <motion.div
-            animate={{ y: 0, opacity: 1, scale: 1, filter: "blur(0px)" }}
-            className="docs-fullscreen"
-            exit={docsExitMode === "to-calendar"
-              ? {
-                  y: "-22%",
-                  opacity: 0,
-                  scale: 0.93,
-                  filter: "blur(5px)",
-                  transition: { type: "spring", stiffness: 420, damping: 32 }
-                }
-              : {
-                  y: "100vh",
-                  opacity: 0.5,
-                  scale: 0.97,
-                  filter: "blur(0px)",
-                  transition: { type: "spring", stiffness: 260, damping: 28 }
-                }
-            }
-            initial={{ y: "100vh", opacity: 0.6, scale: 0.97, filter: "blur(0px)" }}
-            transition={{ type: "spring", stiffness: 200, damping: 26 }}
-          >
-            <MilindDocsSection
-              onAddToCalendar={handleDocAddToCalendar}
-              onAddToTodo={handleDocAddToTodo}
-              onClose={closeDocs}
-              onSendNoteToCanvas={handleSendNoteToCanvas}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* ── milindDocs overlay ── */}
+      {hasMountedDocs && (
+        <motion.div
+          className="docs-fullscreen"
+          style={{
+            y: docsY,
+            scale: docsScale,
+            opacity: docsOpacity,
+            pointerEvents: docsVisible ? "auto" : "none",
+            transformOrigin: "50% 100%",
+          }}
+        >
+          <MilindDocsSection
+            animationState={docsVisible ? "show" : "hidden"}
+            onAddToCalendar={handleDocAddToCalendar}
+            onAddToTodo={handleDocAddToTodo}
+            onClose={closeDocs}
+            onSendNoteToCanvas={handleSendNoteToCanvas}
+            newDocFromCalendar={pendingCalendarDoc}
+            calendarEvents={events}
+            onSyncEventDescription={handleSyncEventDescription}
+          />
+        </motion.div>
+      )}
 
       {/* Sync status pill — springs in from the top-center */}
       <div className="sync-status-anchor">
@@ -1363,6 +2007,8 @@ export function CalendarWorkspace({ userName }: CalendarWorkspaceProps) {
           )}
         </AnimatePresence>
       </div>
-    </main>
+    </motion.main>
+    </UniversalDragLayer>
+    </LayoutGroup>
   );
 }

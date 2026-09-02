@@ -4,6 +4,14 @@ import { authOptions } from "@/lib/auth";
 import { getGmailClient, mapGoogleMessageToClient } from "@/lib/google";
 import type { GmailMessageSummary } from "@/lib/models";
 
+function toBase64Url(value: string) {
+  return Buffer.from(value)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
 export const runtime = "nodejs";
 
 function toErrorMessage(error: unknown) {
@@ -105,13 +113,69 @@ export async function GET(req: Request) {
 
     emails.sort((first, second) => new Date(second.date).getTime() - new Date(first.date).getTime());
 
-    return NextResponse.json({ emails, failedCount });
+    return NextResponse.json({ emails, failedCount }, {
+      headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=120" }
+    });
   } catch (error) {
     if (isMissingGmailScope(error)) {
       return NextResponse.json(
         {
           error:
             "Gmail permission is missing for this session. Sign out of milindCal and sign in again to grant Gmail access."
+        },
+        { status: 403 }
+      );
+    }
+
+    return NextResponse.json({ error: toErrorMessage(error) }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request) {
+  const session = await getServerSession(authOptions);
+
+  if (!session?.accessToken) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json().catch(() => null);
+  const to = String(body?.to ?? "").trim();
+  const subject = String(body?.subject ?? "").trim();
+  const emailBody = String(body?.body ?? "").trim();
+  const cc = String(body?.cc ?? "").trim();
+  const bcc = String(body?.bcc ?? "").trim();
+
+  if (!to || !subject || !emailBody) {
+    return NextResponse.json({ error: "to, subject, and body are required" }, { status: 400 });
+  }
+
+  try {
+    const gmail = getGmailClient(session.accessToken);
+    const rawMessage = [
+      `To: ${to}`,
+      cc ? `Cc: ${cc}` : "",
+      bcc ? `Bcc: ${bcc}` : "",
+      `Subject: ${subject}`,
+      "Content-Type: text/plain; charset=UTF-8",
+      "MIME-Version: 1.0",
+      "",
+      emailBody
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw: toBase64Url(rawMessage) }
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    if (isMissingGmailScope(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "Gmail send permission is missing for this session. Sign out of milindCal and sign in again to grant Gmail access."
         },
         { status: 403 }
       );

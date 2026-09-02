@@ -1,11 +1,10 @@
-import { getServerSession } from "next-auth";
 import { AuthActions } from "@/components/auth-actions";
 import { BrandMark } from "@/components/brand-mark";
 import { CalendarWorkspace } from "@/components/calendar-workspace";
-import { authOptions } from "@/lib/auth";
+import { getSessionOrDev } from "@/lib/dev-auth";
 
 export default async function HomePage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSessionOrDev();
 
   if (!session) {
     return (

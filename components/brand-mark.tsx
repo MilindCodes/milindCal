@@ -1,11 +1,16 @@
+"use client";
+
+import { motion } from "framer-motion";
+
 interface BrandMarkProps {
   compact?: boolean;
   showTagline?: boolean;
+  layoutId?: string;
 }
 
-export function BrandMark({ compact = false, showTagline = false }: BrandMarkProps) {
+export function BrandMark({ compact = false, showTagline = false, layoutId }: BrandMarkProps) {
   return (
-    <div className={`brand-mark ${compact ? "compact" : ""}`}>
+    <motion.div layoutId={layoutId} className={`brand-mark ${compact ? "compact" : ""}`}>
       <svg aria-hidden="true" className="brand-glyph" viewBox="0 0 120 90">
         <rect fill="#ef4444" height="54" width="54" x="10" y="8" />
         <circle cx="55" cy="42" fill="#3b82f6" r="28" />
@@ -13,9 +18,9 @@ export function BrandMark({ compact = false, showTagline = false }: BrandMarkPro
       </svg>
 
       <div className="brand-copy">
-        <p className="brand-wordmark">milindCal</p>
+        <p className="brand-wordmark">milind<span style={{ color: "var(--cherry)" }}>Cal</span></p>
         {showTagline ? <p className="brand-tagline">Own your hours. Move with intent.</p> : null}
       </div>
-    </div>
+    </motion.div>
   );
 }

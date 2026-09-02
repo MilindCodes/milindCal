@@ -3,15 +3,19 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlignLeft, Archive, Calendar, Check, ChevronDown, ChevronLeft,
-  Clock, ExternalLink, Flag, LayoutGrid, Link2, List, Mail, Plus, RefreshCw,
-  Send, Trash2, Unlink, User, X,
+  Clock, ExternalLink, Flag, LayoutGrid, Link2, List, Mail, Maximize2, PenLine, Plus, RefreshCw,
+  Reply, ReplyAll, Send, Trash2, Unlink, User, X,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuid } from "uuid";
+import { BacklinksList } from "@/components/backlinks-list";
+import { useEntityActions, useTasks } from "@/components/entity-store-context";
+import { useUniversalDraggable, useUniversalDroppable } from "@/components/universal-drag-layer";
+import { entityKey, payloadFromTask } from "@/lib/entity-store";
 import type {
-  GmailMessageDetail, GmailMessageSummary, KanbanColumn, Task, TaskImportance,
+  GmailContact, GmailMessageDetail, GmailMessageSummary, KanbanColumn, Task, TaskImportance,
 } from "@/lib/models";
-import { DEFAULT_KANBAN_COLUMNS, KANBAN_COLUMNS_KEY, TASK_STORAGE_KEY } from "@/lib/models";
+import { DEFAULT_KANBAN_COLUMNS, KANBAN_COLUMNS_KEY } from "@/lib/models";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -52,29 +56,34 @@ function formatDue(dateStr: string): string {
 /* ------------------------------------------------------------------ */
 
 const KanbanCard = memo(function KanbanCard({
-  task, columns, onToggle, onDelete, onMoveToColumn,
+  task, columns, onToggle, onDelete, onMoveToColumn, onOpenDoc,
 }: {
   task: Task;
   columns: KanbanColumn[];
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onMoveToColumn: (id: string, colId: string) => void;
+  onOpenDoc: (id: string) => void;
 }) {
   const currentColId = resolveColumnId(task, columns);
   const currentCol = columns.find((c) => c.id === currentColId);
   const borderColor = currentCol?.color ?? IMPORTANCE_COLORS[task.importance];
   const dueFmt = task.dueDate ? formatDue(task.dueDate) : null;
+  const drag = useUniversalDraggable(payloadFromTask(task));
 
   return (
     <motion.div
-      animate={{ opacity: 1, y: 0 }}
+      animate={{ opacity: drag.isDragging ? 0.35 : 1, y: 0 }}
       className={`kanban-card ${task.completed ? "done" : ""}`}
       exit={{ opacity: 0, scale: 0.95 }}
       initial={{ opacity: 0, y: 8 }}
       layout
-      style={{ borderLeftColor: borderColor }}
+      ref={drag.setNodeRef}
+      style={{ borderLeftColor: borderColor, touchAction: "none" }}
       transition={{ type: "spring", stiffness: 260, damping: 22 }}
       whileHover={{ y: -2, boxShadow: "0 6px 18px rgba(0,0,0,0.1)" }}
+      {...drag.attributes}
+      {...drag.listeners}
     >
       <div className="kanban-card-top">
         <button
@@ -85,12 +94,24 @@ const KanbanCard = memo(function KanbanCard({
           <Check size={11} />
         </button>
         <span className="kanban-card-title">{task.title}</span>
+        <button
+          aria-label="Open as doc"
+          className="kanban-card-open-doc"
+          onClick={() => onOpenDoc(task.id)}
+          onPointerDown={(e) => e.stopPropagation()}
+          title="Open as doc"
+          type="button"
+        >
+          <PenLine size={11} />
+        </button>
         <button className="kanban-card-del" onClick={() => onDelete(task.id)} type="button">
           <X size={11} />
         </button>
       </div>
 
       {task.description && <p className="kanban-card-desc">{task.description}</p>}
+
+      <BacklinksList entityKey={entityKey("task", task.id)} label="" />
 
       {(dueFmt || task.assigneeEmail || task.source === "asana") && (
         <div className="kanban-card-meta">
@@ -131,11 +152,132 @@ const KanbanCard = memo(function KanbanCard({
 });
 
 /* ------------------------------------------------------------------ */
+/*  Draggable list-view task row                                       */
+/* ------------------------------------------------------------------ */
+
+const TaskListItem = memo(function TaskListItem({
+  task, onToggle, onDelete, onOpenDoc, showAttachBadge = false, hoverScale = false,
+}: {
+  task: Task;
+  onToggle: (id: string) => void;
+  onDelete: (id: string) => void;
+  onOpenDoc: (id: string) => void;
+  showAttachBadge?: boolean;
+  hoverScale?: boolean;
+}) {
+  const drag = useUniversalDraggable(payloadFromTask(task));
+  return (
+    <motion.div
+      animate={{ opacity: drag.isDragging ? 0.35 : 1, y: 0 }}
+      className="task-item"
+      exit={{ opacity: 0, y: -8 }}
+      initial={{ opacity: 0, y: 12 }}
+      layout
+      ref={drag.setNodeRef}
+      style={{ touchAction: "none" }}
+      title="Drag to a task column, doc, or the calendar"
+      transition={{ type: "spring", stiffness: 240, damping: 22 }}
+      whileHover={hoverScale ? { x: 3, scale: 1.01 } : { x: 3 }}
+      {...drag.attributes}
+      {...drag.listeners}
+    >
+      <motion.button
+        className={`task-toggle${task.completed ? " done" : ""}`}
+        onClick={() => onToggle(task.id)}
+        // stop dnd-kit's drag start when clicking the toggle button
+        onPointerDown={(e) => e.stopPropagation()}
+        type="button"
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.92 }}
+      >
+        <Check size={14} />
+      </motion.button>
+      <div className="task-body">
+        <p className={task.completed ? "completed" : ""}>{task.title}</p>
+        {task.description && (
+          <p className="task-desc-preview">{task.description}</p>
+        )}
+        <div className="task-meta">
+          <span
+            className="task-importance-badge"
+            style={{ "--importance-color": IMPORTANCE_COLORS[task.importance] } as React.CSSProperties}
+          >
+            <Flag size={9} /> {IMPORTANCE_LABELS[task.importance]}
+          </span>
+          {task.dueDate && (
+            <span className="task-due-badge">
+              <Calendar size={9} /> {formatDue(task.dueDate)}
+            </span>
+          )}
+          {task.assigneeEmail && (
+            <span className="task-assignee-badge" title={task.assigneeEmail}>
+              <User size={9} /> {task.assigneeEmail.split("@")[0]}
+            </span>
+          )}
+          {showAttachBadge && task.attachedToEventKey && (
+            <span className="task-attached-badge" title="Attached to event on canvas">⚓</span>
+          )}
+        </div>
+        <BacklinksList entityKey={entityKey("task", task.id)} label="" />
+      </div>
+      <motion.button
+        aria-label="Open as doc"
+        className="task-open-doc"
+        onClick={() => onOpenDoc(task.id)}
+        onPointerDown={(e) => e.stopPropagation()}
+        title="Open as doc"
+        type="button"
+        whileHover={{ scale: 1.07 }}
+        whileTap={{ scale: 0.92 }}
+      >
+        <PenLine size={13} />
+      </motion.button>
+      <motion.button
+        aria-label="Delete task"
+        className="task-delete"
+        onClick={() => onDelete(task.id)}
+        onPointerDown={(e) => e.stopPropagation()}
+        type="button"
+        whileHover={{ scale: 1.07, rotate: -4 }}
+        whileTap={{ scale: 0.92 }}
+      >
+        <Trash2 size={14} />
+      </motion.button>
+    </motion.div>
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/*  Kanban column drop zone wrapper                                    */
+/* ------------------------------------------------------------------ */
+
+function KanbanColumnDropZone({
+  col, children,
+}: {
+  col: KanbanColumn;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useUniversalDroppable({
+    id: `task-col:${col.id}`,
+    targetKind: "task",
+    data: { columnId: col.id },
+  });
+  return (
+    <div
+      className={`kanban-col${isOver ? " universal-droppable--active" : ""}`}
+      ref={setNodeRef}
+    >
+      {children}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Inline Kanban Board                                                */
 /* ------------------------------------------------------------------ */
 
-function InlineKanbanBoard({
-  tasks, columns, onColumnsChange, onToggle, onDelete, onMoveToColumn,
+const InlineKanbanBoard = memo(function InlineKanbanBoard({
+  tasks, columns, onColumnsChange, onToggle, onDelete, onMoveToColumn, onOpenDoc,
 }: {
   tasks: Task[];
   columns: KanbanColumn[];
@@ -143,6 +285,7 @@ function InlineKanbanBoard({
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onMoveToColumn: (id: string, colId: string) => void;
+  onOpenDoc: (id: string) => void;
 }) {
   const [editingColId, setEditingColId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState("");
@@ -183,7 +326,7 @@ function InlineKanbanBoard({
     <div className="board-panel kanban-panel">
       <div className="kanban-columns">
         {columns.map((col) => (
-          <div className="kanban-col" key={col.id}>
+          <KanbanColumnDropZone col={col} key={col.id}>
             <div className="kanban-col-header" style={{ "--col-color": col.color } as React.CSSProperties}>
               <span className="kanban-col-dot" />
               {editingColId === col.id ? (
@@ -226,6 +369,7 @@ function InlineKanbanBoard({
                     key={task.id}
                     onDelete={onDelete}
                     onMoveToColumn={onMoveToColumn}
+                    onOpenDoc={onOpenDoc}
                     onToggle={onToggle}
                     task={task}
                   />
@@ -235,7 +379,7 @@ function InlineKanbanBoard({
                 <p className="kanban-col-empty">No tasks</p>
               )}
             </div>
-          </div>
+          </KanbanColumnDropZone>
         ))}
         <button className="kanban-add-col" onClick={addColumn} type="button">
           <Plus size={12} /> Add column
@@ -243,13 +387,13 @@ function InlineKanbanBoard({
       </div>
     </div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /*  Timeline View                                                      */
 /* ------------------------------------------------------------------ */
 
-function TimelineView({
+const TimelineView = memo(function TimelineView({
   tasks, onToggle, onDelete,
 }: {
   tasks: Task[];
@@ -345,7 +489,7 @@ function TimelineView({
       ))}
     </div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /*  Main sidebar                                                       */
@@ -356,8 +500,21 @@ export function TasksSidebar({
 }: {
   onExpandChange?: (expanded: boolean) => void;
 }) {
-  /* Tasks state */
-  const [tasks, setTasks] = useState<Task[]>([]);
+  /* Tasks state — single source of truth lives in EntityStoreProvider so
+   * calendar-workspace and docs can mutate the same set. */
+  const tasks = useTasks();
+  const { setTasks, openAsDoc } = useEntityActions();
+
+  /* KanbanCard and TaskListItem are memo()'d, but that only pays off while
+   * their props keep their identity. toggleTask/deleteTask/moveTaskToColumn
+   * were plain function expressions, so every render of this component minted
+   * new ones and forced every card to re-render through the memo. With 13
+   * per-keystroke setters living in this same component body, typing one
+   * character into the compose box re-rendered the entire board.
+   *
+   * Reading `tasks` through a ref lets all three be genuinely stable. */
+  const tasksRef = useRef(tasks);
+  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
   const [inputValue, setInputValue] = useState("");
   const [expandedAdd, setExpandedAdd] = useState(false);
   const [draftImportance, setDraftImportance] = useState<TaskImportance>("medium");
@@ -368,6 +525,7 @@ export function TasksSidebar({
   /* Board state */
   const [boardExpanded, setBoardExpanded] = useState(false);
   const [boardView, setBoardView] = useState<BoardView>("kanban");
+  const [emailBoardExpanded, setEmailBoardExpanded] = useState(false);
   const [columns, setColumns] = useState<KanbanColumn[]>(DEFAULT_KANBAN_COLUMNS);
 
   /* Tabs */
@@ -382,8 +540,23 @@ export function TasksSidebar({
   const [emailDetailLoading, setEmailDetailLoading] = useState(false);
   const [emailDetailError, setEmailDetailError] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
-  const [emailActionLoading, setEmailActionLoading] = useState<"archive" | "reply" | null>(null);
+  const [replyMode, setReplyMode] = useState<"reply" | "reply-all">("reply");
+  const [replyCc, setReplyCc] = useState("");
+  const [replyBcc, setReplyBcc] = useState("");
+  const [showReplyCcBcc, setShowReplyCcBcc] = useState(false);
+  const [emailActionLoading, setEmailActionLoading] = useState<"archive" | "reply" | "compose" | null>(null);
   const [emailActionStatus, setEmailActionStatus] = useState<string | null>(null);
+  /* Compose state */
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeTo, setComposeTo] = useState("");
+  const [composeSubject, setComposeSubject] = useState("");
+  const [composeBody, setComposeBody] = useState("");
+  const [composeCc, setComposeCc] = useState("");
+  const [composeBcc, setComposeBcc] = useState("");
+  const [showComposeCcBcc, setShowComposeCcBcc] = useState(false);
+  /* Contacts */
+  const [contacts, setContacts] = useState<GmailContact[]>([]);
+  const [contactsLoaded, setContactsLoaded] = useState(false);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const readEmailsAbortRef = useRef<AbortController | null>(null);
   const openEmailAbortRef = useRef<AbortController | null>(null);
@@ -394,27 +567,26 @@ export function TasksSidebar({
   const [asanaSyncing, setAsanaSyncing] = useState(false);
   const [asanaError, setAsanaError] = useState<string | null>(null);
   const asanaSyncVersionRef = useRef<number>(0);
+  const saveColumnsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* Load tasks */
-  useEffect(() => {
-    const raw = localStorage.getItem(TASK_STORAGE_KEY);
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw) as Task[];
-      setTasks(
-        Array.isArray(parsed)
-          ? parsed.map((t) => ({ ...t, importance: t.importance ?? ("medium" as TaskImportance) }))
-          : []
-      );
-    } catch {
-      setTasks([]);
-    }
-  }, []);
+  /* Fallback droppable: drops that miss a specific kanban column (e.g. in
+   * list view, or the empty area below cards) still land on the sidebar
+   * and convert to tasks. Nested per-column droppables take priority. */
+  const panelDroppable = useUniversalDroppable({ id: "task-sidebar", targetKind: "task" });
 
-  /* Save tasks — only persist local tasks, not Asana-synced ones */
-  useEffect(() => {
-    localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(tasks.filter((t) => t.source !== "asana")));
-  }, [tasks]);
+  /* "Open as doc" — reuse a linked doc if one exists, else create one seeded
+   * with the task's title/description. Store raises the docs panel. */
+  const handleOpenTaskAsDoc = useCallback(
+    (id: string) => {
+      const t = tasks.find((task) => task.id === id);
+      if (!t) return;
+      openAsDoc(entityKey("task", id), { title: t.title, description: t.description });
+    },
+    [tasks, openAsDoc],
+  );
+
+  /* Tasks load/save is handled by EntityStoreProvider. Importance defaults
+   * are applied in the provider's initial read. */
 
   /* Load columns */
   useEffect(() => {
@@ -426,15 +598,21 @@ export function TasksSidebar({
     } catch { /* ignore */ }
   }, []);
 
-  /* Save columns */
+  /* Save columns — debounced 400 ms */
   useEffect(() => {
-    localStorage.setItem(KANBAN_COLUMNS_KEY, JSON.stringify(columns));
+    if (saveColumnsTimerRef.current) clearTimeout(saveColumnsTimerRef.current);
+    saveColumnsTimerRef.current = setTimeout(() => {
+      localStorage.setItem(KANBAN_COLUMNS_KEY, JSON.stringify(columns));
+    }, 400);
+    return () => {
+      if (saveColumnsTimerRef.current) clearTimeout(saveColumnsTimerRef.current);
+    };
   }, [columns]);
 
   /* Propagate board expanded state */
   useEffect(() => {
-    onExpandChange?.(boardExpanded);
-  }, [boardExpanded, onExpandChange]);
+    onExpandChange?.(boardExpanded || emailBoardExpanded);
+  }, [boardExpanded, emailBoardExpanded, onExpandChange]);
 
   /* ---------------------------------------------------------------- */
   /*  Asana integration                                               */
@@ -457,7 +635,7 @@ export function TasksSidebar({
     } finally {
       setAsanaSyncing(false);
     }
-  }, []);
+  }, [setTasks]);
 
   /** Check Asana connection status on mount and load tasks if connected. */
   useEffect(() => {
@@ -476,7 +654,10 @@ export function TasksSidebar({
     })();
   }, [loadAsanaTasks]);
 
-  /** Poll for webhook-triggered version changes every 20 s. */
+  /** Poll for webhook-triggered version changes every 20 s, but only while the
+   *  tab is visible — a backgrounded tab has nothing to show, and every tick
+   *  costs a session decrypt plus a KV read server-side. Coming back to the
+   *  tab triggers an immediate catch-up poll, so no change is missed. */
   useEffect(() => {
     if (!asanaConnected) return;
     const tick = async () => {
@@ -490,8 +671,21 @@ export function TasksSidebar({
         asanaSyncVersionRef.current = version;
       } catch { /* network errors are tolerated */ }
     };
-    const id = setInterval(() => void tick(), 20_000);
-    return () => clearInterval(id);
+
+    const id = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void tick();
+    }, 20_000);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [asanaConnected, loadAsanaTasks]);
 
   const disconnectAsana = useCallback(async () => {
@@ -502,7 +696,7 @@ export function TasksSidebar({
     setAsanaUserName("");
     setAsanaError(null);
     setTasks((prev) => prev.filter((t) => t.source !== "asana"));
-  }, []);
+  }, [setTasks]);
 
   const remainingCount = useMemo(() => tasks.filter((t) => !t.completed).length, [tasks]);
 
@@ -546,11 +740,13 @@ export function TasksSidebar({
         });
         const body = await resp.json() as { task?: { gid: string }; error?: string };
         if (!resp.ok) throw new Error(body.error ?? "Failed to create in Asana");
+        const gid = body.task?.gid;
+        if (!gid) throw new Error("Asana task created but GID missing");
         setTasks((prev) => [
           {
             ...localDraft,
-            id: `asana_${body.task!.gid}`,
-            asanaGid: body.task!.gid,
+            id: `asana_${gid}`,
+            asanaGid: gid,
             source: "asana" as const,
           },
           ...prev,
@@ -564,8 +760,8 @@ export function TasksSidebar({
     }
   };
 
-  const toggleTask = (id: string) => {
-    const task = tasks.find((t) => t.id === id);
+  const toggleTask = useCallback((id: string) => {
+    const task = tasksRef.current.find((t) => t.id === id);
     if (!task) return;
     const newCompleted = !task.completed;
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed: newCompleted } : t)));
@@ -579,18 +775,18 @@ export function TasksSidebar({
         setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed: task.completed } : t)));
       });
     }
-  };
+  }, [setTasks]);
 
-  const deleteTask = (id: string) => {
-    const task = tasks.find((t) => t.id === id);
+  const deleteTask = useCallback((id: string) => {
+    const task = tasksRef.current.find((t) => t.id === id);
     setTasks((prev) => prev.filter((t) => t.id !== id));
     if (task?.asanaGid) {
       fetch(`/api/asana/tasks/${task.asanaGid}`, { method: "DELETE" })
         .catch(() => setAsanaError("Failed to delete task in Asana"));
     }
-  };
+  }, [setTasks]);
 
-  const moveTaskToColumn = (id: string, colId: string) => {
+  const moveTaskToColumn = useCallback((id: string, colId: string) => {
     setTasks((prev) =>
       prev.map((t) => {
         if (t.id !== id) return t;
@@ -598,7 +794,7 @@ export function TasksSidebar({
         return { ...t, columnId: isDone ? undefined : colId, completed: isDone };
       })
     );
-  };
+  }, [setTasks]);
 
   /* ---------------------------------------------------------------- */
   /*  Email helpers                                                   */
@@ -662,6 +858,10 @@ export function TasksSidebar({
     setEmailDetailError(null);
     setEmailActionStatus(null);
     setReplyText("");
+    setReplyMode("reply");
+    setReplyCc("");
+    setReplyBcc("");
+    setShowReplyCcBcc(false);
   }, []);
 
   const archiveSelectedEmail = useCallback(async () => {
@@ -702,14 +902,23 @@ export function TasksSidebar({
       const response = await fetch(`/api/google/emails/${selectedEmail.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reply", replyText: shortReply }),
+        body: JSON.stringify({
+          action: replyMode,
+          replyText: shortReply,
+          cc: replyCc.trim() || undefined,
+          bcc: replyBcc.trim() || undefined,
+        }),
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? "Unable to send reply");
       }
       setReplyText("");
-      setEmailActionStatus(`Reply sent to ${selectedEmail.from.replace(/<[^>]+>/g, "").trim()}.`);
+      setReplyCc("");
+      setReplyBcc("");
+      setShowReplyCcBcc(false);
+      const label = replyMode === "reply-all" ? "Reply all sent" : "Reply sent";
+      setEmailActionStatus(`${label} to ${selectedEmail.from.replace(/<[^>]+>/g, "").trim()}.`);
     } catch (error) {
       setEmailDetailError(
         error instanceof Error
@@ -721,20 +930,76 @@ export function TasksSidebar({
     } finally {
       setEmailActionLoading(null);
     }
-  }, [replyText, selectedEmail]);
+  }, [replyMode, replyText, replyCc, replyBcc, selectedEmail]);
+
+  const sendCompose = useCallback(async () => {
+    const to = composeTo.trim();
+    const subject = composeSubject.trim();
+    const body = composeBody.trim();
+    if (!to || !subject || !body) return;
+    setEmailActionLoading("compose");
+    setEmailActionStatus(null);
+    setEmailDetailError(null);
+    try {
+      const response = await fetch("/api/google/emails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to,
+          subject,
+          body,
+          cc: composeCc.trim() || undefined,
+          bcc: composeBcc.trim() || undefined,
+        }),
+      });
+      if (!response.ok) {
+        const json = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(json?.error ?? "Unable to send email");
+      }
+      setComposeOpen(false);
+      setComposeTo("");
+      setComposeSubject("");
+      setComposeBody("");
+      setComposeCc("");
+      setComposeBcc("");
+      setShowComposeCcBcc(false);
+      setEmailActionStatus(`Email sent to ${to}.`);
+    } catch (error) {
+      setEmailDetailError(error instanceof Error ? error.message : "Unable to send email");
+    } finally {
+      setEmailActionLoading(null);
+    }
+  }, [composeTo, composeSubject, composeBody, composeCc, composeBcc]);
+
+  const fetchContacts = useCallback(async () => {
+    if (contactsLoaded) return;
+    try {
+      const res = await fetch("/api/google/contacts", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { contacts: GmailContact[] };
+      setContacts(Array.isArray(data.contacts) ? data.contacts : []);
+    } catch {
+      // silently fail — contacts are optional
+    } finally {
+      setContactsLoaded(true);
+    }
+  }, [contactsLoaded]);
 
   const resizeFrame = useCallback(() => {
+    // In expanded reader mode the iframe height is controlled by CSS flex.
+    // Overriding it here would fight the layout, so skip.
+    if (emailBoardExpanded) return;
     const frame = frameRef.current;
     if (!frame) return;
     try {
       const doc = frame.contentDocument;
       if (doc?.documentElement) {
-        frame.style.height = `${Math.min(doc.documentElement.scrollHeight + 16, 400)}px`;
+        frame.style.height = `${Math.min(doc.documentElement.scrollHeight + 16, 700)}px`;
       }
     } catch {
-      frame.style.height = "280px";
+      frame.style.height = "440px";
     }
-  }, []);
+  }, [emailBoardExpanded]);
 
   useEffect(() => {
     if (activePanel !== "emails") return;
@@ -743,7 +1008,15 @@ export function TasksSidebar({
   }, [activePanel, emails.length, emailsLoading, emailsError, readEmails]);
 
   useEffect(() => {
-    if (activePanel === "tasks") closeEmail();
+    if (activePanel === "emails") void fetchContacts();
+  }, [activePanel, fetchContacts]);
+
+  useEffect(() => {
+    if (activePanel === "tasks") {
+      closeEmail();
+      setEmailBoardExpanded(false);
+      setComposeOpen(false);
+    }
   }, [activePanel, closeEmail]);
 
   /* ---------------------------------------------------------------- */
@@ -753,7 +1026,7 @@ export function TasksSidebar({
   return (
     <motion.aside
       animate={{ opacity: 1, x: 0 }}
-      className={`tasks-sidebar${boardExpanded ? " board-expanded" : ""}${activePanel === "emails" && !boardExpanded ? " email-expanded" : ""}`}
+      className={`tasks-sidebar${boardExpanded ? " board-expanded" : ""}${activePanel === "emails" && !boardExpanded ? " email-expanded" : ""}${emailBoardExpanded ? " email-reader-mode" : ""}`}
       initial={{ opacity: 0, x: 18 }}
       transition={{ duration: 0.42, ease: [0.2, 0.8, 0.2, 1] }}
     >
@@ -811,10 +1084,11 @@ export function TasksSidebar({
         {activePanel === "tasks" ? (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
-            className="tasks-panel"
+            className={`tasks-panel${panelDroppable.isOver ? " universal-droppable--active" : ""}`}
             exit={{ opacity: 0, y: -8 }}
             initial={{ opacity: 0, y: 8 }}
             key="tasks"
+            ref={panelDroppable.setNodeRef}
             transition={{ duration: 0.18 }}
           >
             {/* Toolbar: expand/close + view switcher */}
@@ -1042,6 +1316,7 @@ export function TasksSidebar({
                   onColumnsChange={setColumns}
                   onDelete={deleteTask}
                   onMoveToColumn={moveTaskToColumn}
+                  onOpenDoc={handleOpenTaskAsDoc}
                   onToggle={toggleTask}
                   tasks={tasks}
                 />
@@ -1055,60 +1330,13 @@ export function TasksSidebar({
                 <div className="board-panel expanded-list-panel">
                   <AnimatePresence initial={false}>
                     {tasks.map((task) => (
-                      <motion.div
-                        animate={{ opacity: 1, y: 0 }}
-                        className="task-item"
-                        exit={{ opacity: 0, y: -8 }}
-                        initial={{ opacity: 0, y: 12 }}
+                      <TaskListItem
                         key={task.id}
-                        layout
-                        transition={{ type: "spring", stiffness: 240, damping: 22 }}
-                        whileHover={{ x: 3 }}
-                      >
-                        <motion.button
-                          className={`task-toggle${task.completed ? " done" : ""}`}
-                          onClick={() => toggleTask(task.id)}
-                          type="button"
-                          whileHover={{ scale: 1.08 }}
-                          whileTap={{ scale: 0.92 }}
-                        >
-                          <Check size={14} />
-                        </motion.button>
-                        <div className="task-body">
-                          <p className={task.completed ? "completed" : ""}>{task.title}</p>
-                          {task.description && (
-                            <p className="task-desc-preview">{task.description}</p>
-                          )}
-                          <div className="task-meta">
-                            <span
-                              className="task-importance-badge"
-                              style={{ "--importance-color": IMPORTANCE_COLORS[task.importance] } as React.CSSProperties}
-                            >
-                              <Flag size={9} /> {IMPORTANCE_LABELS[task.importance]}
-                            </span>
-                            {task.dueDate && (
-                              <span className="task-due-badge">
-                                <Calendar size={9} /> {formatDue(task.dueDate)}
-                              </span>
-                            )}
-                            {task.assigneeEmail && (
-                              <span className="task-assignee-badge" title={task.assigneeEmail}>
-                                <User size={9} /> {task.assigneeEmail.split("@")[0]}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <motion.button
-                          aria-label="Delete task"
-                          className="task-delete"
-                          onClick={() => deleteTask(task.id)}
-                          type="button"
-                          whileHover={{ scale: 1.07, rotate: -4 }}
-                          whileTap={{ scale: 0.92 }}
-                        >
-                          <Trash2 size={14} />
-                        </motion.button>
-                      </motion.div>
+                        task={task}
+                        onToggle={toggleTask}
+                        onDelete={deleteTask}
+                        onOpenDoc={handleOpenTaskAsDoc}
+                      />
                     ))}
                   </AnimatePresence>
                   {tasks.length === 0 && <p className="board-empty">No tasks yet.</p>}
@@ -1125,63 +1353,15 @@ export function TasksSidebar({
               >
                 <AnimatePresence initial={false}>
                   {tasks.map((task) => (
-                    <motion.div
-                      animate={{ opacity: 1, y: 0 }}
-                      className="task-item"
-                      exit={{ opacity: 0, y: -8 }}
-                      initial={{ opacity: 0, y: 12 }}
+                    <TaskListItem
                       key={task.id}
-                      layout
-                      transition={{ type: "spring", stiffness: 240, damping: 22 }}
-                      whileHover={{ x: 3, scale: 1.01 }}
-                    >
-                      <motion.button
-                        className={`task-toggle${task.completed ? " done" : ""}`}
-                        onClick={() => toggleTask(task.id)}
-                        type="button"
-                        whileHover={{ scale: 1.08 }}
-                        whileTap={{ scale: 0.92 }}
-                      >
-                        <Check size={14} />
-                      </motion.button>
-                      <div className="task-body">
-                        <p className={task.completed ? "completed" : ""}>{task.title}</p>
-                        {task.description && (
-                          <p className="task-desc-preview">{task.description}</p>
-                        )}
-                        <div className="task-meta">
-                          <span
-                            className="task-importance-badge"
-                            style={{ "--importance-color": IMPORTANCE_COLORS[task.importance] } as React.CSSProperties}
-                          >
-                            <Flag size={9} /> {IMPORTANCE_LABELS[task.importance]}
-                          </span>
-                          {task.dueDate && (
-                            <span className="task-due-badge">
-                              <Calendar size={9} /> {formatDue(task.dueDate)}
-                            </span>
-                          )}
-                          {task.assigneeEmail && (
-                            <span className="task-assignee-badge" title={task.assigneeEmail}>
-                              <User size={9} /> {task.assigneeEmail.split("@")[0]}
-                            </span>
-                          )}
-                          {task.attachedToEventKey && (
-                            <span className="task-attached-badge" title="Attached to event on canvas">⚓</span>
-                          )}
-                        </div>
-                      </div>
-                      <motion.button
-                        aria-label="Delete task"
-                        className="task-delete"
-                        onClick={() => deleteTask(task.id)}
-                        type="button"
-                        whileHover={{ scale: 1.07, rotate: -4 }}
-                        whileTap={{ scale: 0.92 }}
-                      >
-                        <Trash2 size={14} />
-                      </motion.button>
-                    </motion.div>
+                      task={task}
+                      onToggle={toggleTask}
+                      onDelete={deleteTask}
+                      onOpenDoc={handleOpenTaskAsDoc}
+                      showAttachBadge
+                      hoverScale
+                    />
                   ))}
                 </AnimatePresence>
               </motion.div>
@@ -1199,20 +1379,50 @@ export function TasksSidebar({
           >
             <div className="email-placeholder-title">
               <Mail size={16} />
-              <h3>{selectedEmailId ? "Email" : "Inbox"}</h3>
-              {selectedEmailId && (
+              <h3>{composeOpen ? "New Email" : selectedEmailId ? "Email" : "Inbox"}</h3>
+              {selectedEmailId && !composeOpen && (
                 <button className="email-refresh" onClick={closeEmail} type="button">
                   <ChevronLeft size={14} /> Back
                 </button>
               )}
-              <button
-                className="email-refresh"
-                disabled={emailsLoading}
-                onClick={() => void readEmails()}
+              {composeOpen ? (
+                <button className="email-refresh" onClick={() => setComposeOpen(false)} type="button">
+                  <X size={14} /> Cancel
+                </button>
+              ) : (
+                <>
+                  <button
+                    className="email-refresh"
+                    disabled={emailsLoading}
+                    onClick={() => void readEmails()}
+                    type="button"
+                  >
+                    <RefreshCw className={emailsLoading ? "spin" : ""} size={14} /> Refresh
+                  </button>
+                  <motion.button
+                    aria-label="Compose new email"
+                    className="email-compose-btn"
+                    onClick={() => { setComposeOpen(true); closeEmail(); }}
+                    title="Compose"
+                    type="button"
+                    whileHover={{ scale: 1.06 }}
+                    whileTap={{ scale: 0.94 }}
+                  >
+                    <PenLine size={13} /> Compose
+                  </motion.button>
+                </>
+              )}
+              <motion.button
+                aria-label={emailBoardExpanded ? "Close expanded view" : "Expand email view"}
+                className="kanban-open-btn"
+                onClick={() => setEmailBoardExpanded((v) => !v)}
+                title={emailBoardExpanded ? "Collapse" : "Expand view"}
                 type="button"
+                whileHover={{ scale: 1.08 }}
+                whileTap={{ scale: 0.93 }}
               >
-                <RefreshCw className={emailsLoading ? "spin" : ""} size={14} /> Refresh
-              </button>
+                {emailBoardExpanded ? <X size={14} /> : <Maximize2 size={14} />}
+              </motion.button>
             </div>
 
             <AnimatePresence>
@@ -1277,8 +1487,116 @@ export function TasksSidebar({
               </motion.p>
             )}
 
+            {/* Contacts datalist for autocomplete */}
+            <datalist id="email-contacts">
+              {contacts.map((c) => (
+                <option key={c.email} label={c.name} value={c.email} />
+              ))}
+            </datalist>
+
             <AnimatePresence mode="wait">
-              {selectedEmailId ? (
+              {composeOpen ? (
+                /* ---- Compose panel ---- */
+                <motion.div
+                  animate={{ opacity: 1, y: 0 }}
+                  className="email-compose-panel"
+                  exit={{ opacity: 0, y: -6 }}
+                  initial={{ opacity: 0, y: 10 }}
+                  key="email-compose"
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <div className="email-compose-field">
+                    <label htmlFor="compose-to">To</label>
+                    <input
+                      id="compose-to"
+                      list="email-contacts"
+                      onChange={(e) => setComposeTo(e.target.value)}
+                      placeholder="recipient@example.com"
+                      type="email"
+                      value={composeTo}
+                    />
+                  </div>
+                  <div className="email-compose-field">
+                    <label htmlFor="compose-subject">Subject</label>
+                    <input
+                      id="compose-subject"
+                      onChange={(e) => setComposeSubject(e.target.value)}
+                      placeholder="Subject"
+                      type="text"
+                      value={composeSubject}
+                    />
+                  </div>
+                  <button
+                    className="email-ccbcc-toggle"
+                    onClick={() => setShowComposeCcBcc((v) => !v)}
+                    type="button"
+                  >
+                    <ChevronDown
+                      size={12}
+                      style={{ transform: showComposeCcBcc ? "rotate(180deg)" : "none", transition: "transform 0.18s" }}
+                    />
+                    {showComposeCcBcc ? "Hide CC / BCC" : "Add CC / BCC"}
+                  </button>
+                  <AnimatePresence>
+                    {showComposeCcBcc && (
+                      <motion.div
+                        animate={{ opacity: 1, height: "auto" }}
+                        className="email-ccbcc-fields"
+                        exit={{ opacity: 0, height: 0 }}
+                        initial={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.18 }}
+                      >
+                        <div className="email-compose-field">
+                          <label htmlFor="compose-cc">CC</label>
+                          <input
+                            id="compose-cc"
+                            list="email-contacts"
+                            onChange={(e) => setComposeCc(e.target.value)}
+                            placeholder="cc@example.com"
+                            type="text"
+                            value={composeCc}
+                          />
+                        </div>
+                        <div className="email-compose-field">
+                          <label htmlFor="compose-bcc">BCC</label>
+                          <input
+                            id="compose-bcc"
+                            list="email-contacts"
+                            onChange={(e) => setComposeBcc(e.target.value)}
+                            placeholder="bcc@example.com"
+                            type="text"
+                            value={composeBcc}
+                          />
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  <div className="email-compose-field">
+                    <label htmlFor="compose-body">Message</label>
+                    <textarea
+                      id="compose-body"
+                      onChange={(e) => setComposeBody(e.target.value)}
+                      placeholder="Write your message…"
+                      rows={5}
+                      value={composeBody}
+                    />
+                  </div>
+                  {emailDetailError && (
+                    <p className="email-status error">{emailDetailError}</p>
+                  )}
+                  <motion.button
+                    className="primary-button email-send"
+                    disabled={!composeTo.trim() || !composeSubject.trim() || !composeBody.trim() || emailActionLoading === "compose"}
+                    onClick={() => void sendCompose()}
+                    transition={{ type: "spring", stiffness: 300, damping: 22 }}
+                    type="button"
+                    whileHover={{ y: -2, scale: 1.02 }}
+                    whileTap={{ scale: 0.97 }}
+                  >
+                    <Send size={14} /> {emailActionLoading === "compose" ? "Sending…" : "Send"}
+                  </motion.button>
+                </motion.div>
+              ) : selectedEmailId ? (
                 <motion.section
                   animate={{ opacity: 1, y: 0 }}
                   className="email-detail"
@@ -1316,6 +1634,9 @@ export function TasksSidebar({
                             </div>
                             {selectedEmail.to && (
                               <p className="email-detail-to">To: {selectedEmail.to}</p>
+                            )}
+                            {selectedEmail.cc && (
+                              <p className="email-detail-to">CC: {selectedEmail.cc}</p>
                             )}
                           </div>
                           {selectedEmail.htmlBody ? (
@@ -1362,13 +1683,75 @@ export function TasksSidebar({
                         </motion.button>
                       </div>
 
+                      {/* Reply mode toggle */}
+                      <div className="email-reply-mode-toggle">
+                        <button
+                          className={`reply-mode-pill${replyMode === "reply" ? " active" : ""}`}
+                          onClick={() => setReplyMode("reply")}
+                          type="button"
+                        >
+                          <Reply size={12} /> Reply
+                        </button>
+                        <button
+                          className={`reply-mode-pill${replyMode === "reply-all" ? " active" : ""}`}
+                          onClick={() => setReplyMode("reply-all")}
+                          type="button"
+                        >
+                          <ReplyAll size={12} /> Reply all
+                        </button>
+                        <button
+                          className="reply-mode-pill ccbcc-toggle"
+                          onClick={() => setShowReplyCcBcc((v) => !v)}
+                          type="button"
+                        >
+                          <ChevronDown
+                            size={12}
+                            style={{ transform: showReplyCcBcc ? "rotate(180deg)" : "none", transition: "transform 0.18s" }}
+                          />
+                          CC / BCC
+                        </button>
+                      </div>
+
                       <div className="email-reply-box">
-                        <label htmlFor="quick-reply">Quick reply</label>
+                        <AnimatePresence>
+                          {showReplyCcBcc && (
+                            <motion.div
+                              animate={{ opacity: 1, height: "auto" }}
+                              className="email-ccbcc-fields"
+                              exit={{ opacity: 0, height: 0 }}
+                              initial={{ opacity: 0, height: 0 }}
+                              transition={{ duration: 0.18 }}
+                            >
+                              <div className="email-compose-field">
+                                <label htmlFor="reply-cc">CC</label>
+                                <input
+                                  id="reply-cc"
+                                  list="email-contacts"
+                                  onChange={(e) => setReplyCc(e.target.value)}
+                                  placeholder="cc@example.com"
+                                  type="text"
+                                  value={replyCc}
+                                />
+                              </div>
+                              <div className="email-compose-field">
+                                <label htmlFor="reply-bcc">BCC</label>
+                                <input
+                                  id="reply-bcc"
+                                  list="email-contacts"
+                                  onChange={(e) => setReplyBcc(e.target.value)}
+                                  placeholder="bcc@example.com"
+                                  type="text"
+                                  value={replyBcc}
+                                />
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                         <textarea
                           id="quick-reply"
-                          maxLength={600}
+                          maxLength={1200}
                           onChange={(e) => setReplyText(e.target.value)}
-                          placeholder="Thanks, got it. I'll follow up shortly."
+                          placeholder="Write your reply…"
                           rows={3}
                           value={replyText}
                         />
@@ -1381,7 +1764,8 @@ export function TasksSidebar({
                           whileHover={{ y: -2, scale: 1.02 }}
                           whileTap={{ scale: 0.97 }}
                         >
-                          <Send size={14} /> {emailActionLoading === "reply" ? "Sending..." : "Send reply"}
+                          {replyMode === "reply-all" ? <ReplyAll size={14} /> : <Reply size={14} />}
+                          {emailActionLoading === "reply" ? "Sending…" : replyMode === "reply-all" ? "Reply all" : "Reply"}
                         </motion.button>
                       </div>
                     </>

@@ -1,12 +1,14 @@
 "use client";
 
-import { motion, useMotionValue, useAnimation, type PanInfo } from "framer-motion";
+import { AnimatePresence, animate, motion, useMotionValue, useAnimation, useDragControls, type PanInfo } from "framer-motion";
 import { startOfWeek, endOfWeek, addWeeks, format, isSameWeek } from "date-fns";
 import {
   ChevronLeft,
   ChevronRight,
+  FileText,
   Link2,
   ListTodo,
+  Minimize2,
   StickyNote,
   X,
   Check,
@@ -24,8 +26,10 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import type { CalendarEvent, CalendarSummary, GoogleEventPayload, PanelNote, Task, TaskImportance } from "@/lib/models";
-import { CANVAS_PENDING_NOTE_KEY, TASK_STORAGE_KEY } from "@/lib/models";
+import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, Task, TaskImportance } from "@/lib/models";
+import { CANVAS_PENDING_NOTE_KEY } from "@/lib/models";
+import { MilindDoc } from "@/components/milind-doc";
+import { useDocs, useEntityActions, useTasks } from "@/components/entity-store-context";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -62,6 +66,25 @@ const TASK_CARD_W = 140;
 const TASK_CARD_H = 60;
 const STORAGE_PREFIX = "milindcal.canvas";
 const uid = () => Math.random().toString(36).slice(2, 10);
+
+const DOC_NODE_W = 500;
+const DOC_NODE_H = 480;
+
+function tiptapToPlainText(content: Record<string, unknown> | null): string {
+  if (!content) return "";
+  const parts: string[] = [];
+  const walk = (node: Record<string, unknown>) => {
+    if (typeof node.text === "string") { parts.push(node.text); return; }
+    const children = node.content as Record<string, unknown>[] | undefined;
+    if (Array.isArray(children)) {
+      children.forEach(walk);
+      const block = ["paragraph", "heading", "blockquote", "listItem", "codeBlock"];
+      if (block.includes(node.type as string)) parts.push("\n");
+    }
+  };
+  walk(content);
+  return parts.join("").trim();
+}
 
 const IMPORTANCE_COLORS: Record<TaskImportance, string> = {
   low: "#6b7280",
@@ -106,6 +129,7 @@ interface TaskNodeProps {
   task: Task;
   initialPos: Position;
   canvasRect: DOMRect | null;
+  onLivePosUpdate: (id: string, pos: Position) => void;
   onPositionUpdate: (id: string, pos: Position) => void;
   onAttach: (taskId: string) => void;
   onDetach: (taskId: string) => void;
@@ -119,6 +143,7 @@ function TaskNode({
   task,
   initialPos,
   canvasRect,
+  onLivePosUpdate,
   onPositionUpdate,
   onAttach,
   onToggle,
@@ -139,17 +164,19 @@ function TaskNode({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPos.x, initialPos.y]);
 
+  // Only update the live ref (for SVG line tracking) on every frame — no React
+  // state or localStorage writes until drag end.
   useEffect(() => {
     const unX = x.on("change", (latest) => {
       posRef.current = { ...posRef.current, x: latest };
-      onPositionUpdate(task.id, posRef.current);
+      onLivePosUpdate(task.id, posRef.current);
     });
     const unY = y.on("change", (latest) => {
       posRef.current = { ...posRef.current, y: latest };
-      onPositionUpdate(task.id, posRef.current);
+      onLivePosUpdate(task.id, posRef.current);
     });
     return () => { unX(); unY(); };
-  }, [task.id, x, y, onPositionUpdate]);
+  }, [task.id, x, y, onLivePosUpdate]);
 
   const handleDragEnd = (_: unknown, info: PanInfo) => {
     isDragging.current = false;
@@ -160,6 +187,7 @@ function TaskNode({
     const targetX = Math.max(0, Math.min(maxX, curX + info.velocity.x * 0.18));
     const targetY = Math.max(0, Math.min(maxY, curY + info.velocity.y * 0.18));
     void controls.start({ x: targetX, y: targetY, transition: { type: "tween", duration: 0.6, ease: "easeOut" } });
+    // Persist once after the momentum animation settles — not on every frame.
     setTimeout(() => onPositionUpdate(task.id, { x: x.get(), y: y.get() }), 650);
   };
 
@@ -222,6 +250,167 @@ function TaskNode({
 }
 
 /* ------------------------------------------------------------------ */
+/*  CanvasDocNode (floating milindDoc editor)                          */
+/* ------------------------------------------------------------------ */
+
+interface CanvasDocNodeProps {
+  nodeKey: string;
+  doc: MilindDocFile;
+  allDocs: MilindDocFile[];
+  initialPos: Position;
+  canvasRect: DOMRect | null;
+  onLivePosUpdate: (key: string, pos: Position) => void;
+  onPositionUpdate: (key: string, pos: Position) => void;
+  onSaveDoc: (key: string, doc: MilindDocFile) => void;
+  onClose: (key: string) => void;
+  zIndex: number;
+  onBringToFront: (key: string) => void;
+}
+
+function CanvasDocNode({
+  nodeKey,
+  doc,
+  allDocs,
+  initialPos,
+  canvasRect,
+  onLivePosUpdate,
+  onPositionUpdate,
+  onSaveDoc,
+  onClose,
+  zIndex,
+  onBringToFront,
+}: CanvasDocNodeProps) {
+  const x = useMotionValue(initialPos.x);
+  const y = useMotionValue(initialPos.y);
+  const dragControls = useDragControls();
+  const posRef = useRef(initialPos);
+  const [size, setSize] = useState({ w: DOC_NODE_W, h: DOC_NODE_H });
+
+  const startResize = (e: React.PointerEvent, dir: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startW = size.w;
+    const startH = size.h;
+
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      setSize({
+        w: dir.includes("e") ? Math.max(320, startW + dx) : startW,
+        h: dir.includes("s") ? Math.max(280, startH + dy) : startH,
+      });
+    };
+
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  };
+
+  useEffect(() => {
+    x.set(initialPos.x);
+    y.set(initialPos.y);
+    posRef.current = initialPos;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPos.x, initialPos.y]);
+
+  // Live ref update only — no React state or localStorage on every frame.
+  useEffect(() => {
+    const unX = x.on("change", (latest) => {
+      posRef.current = { ...posRef.current, x: latest };
+      onLivePosUpdate(nodeKey, posRef.current);
+    });
+    const unY = y.on("change", (latest) => {
+      posRef.current = { ...posRef.current, y: latest };
+      onLivePosUpdate(nodeKey, posRef.current);
+    });
+    return () => { unX(); unY(); };
+  }, [nodeKey, x, y, onLivePosUpdate]);
+
+  const handleDragEnd = (_: unknown, info: PanInfo) => {
+    const curX = x.get();
+    const curY = y.get();
+    const maxX = canvasRect ? canvasRect.width - DOC_NODE_W : 2000;
+    const maxY = canvasRect ? canvasRect.height - 44 : 1200;
+    const targetX = Math.max(0, Math.min(maxX, curX + info.velocity.x * 0.12));
+    const targetY = Math.max(0, Math.min(maxY, curY + info.velocity.y * 0.12));
+    void animate(x, targetX, { type: "tween", duration: 0.5, ease: "easeOut" });
+    void animate(y, targetY, { type: "tween", duration: 0.5, ease: "easeOut" });
+    // Persist once after momentum settle.
+    setTimeout(() => onPositionUpdate(nodeKey, { x: x.get(), y: y.get() }), 550);
+  };
+
+  return (
+    <motion.div
+      animate={{ scale: 1, opacity: 1, rotate: 0 }}
+      className="canvas-doc-node"
+      drag
+      dragControls={dragControls}
+      dragListener={false}
+      dragMomentum={false}
+      exit={{ scale: 0.05, opacity: 0, rotate: 8, transition: { type: "spring", stiffness: 520, damping: 26 } }}
+      initial={{ scale: 0.05, opacity: 0, rotate: -14 }}
+      onClick={(e) => e.stopPropagation()}
+      onDragEnd={handleDragEnd}
+      onDragStart={() => onBringToFront(nodeKey)}
+      onPointerDown={() => onBringToFront(nodeKey)}
+      style={{ x, y, zIndex, width: size.w, height: size.h, position: "absolute", top: 0, left: 0 }}
+      transition={{ type: "spring", stiffness: 520, damping: 24 }}
+    >
+      {/* Header — drag handle */}
+      <div
+        className="canvas-doc-header"
+        onPointerDown={(e) => dragControls.start(e)}
+      >
+        <FileText size={13} className="canvas-doc-header-icon" />
+        <span className="canvas-doc-title">{doc.title || "Untitled"}</span>
+        <div className="canvas-doc-header-actions">
+          <button
+            className="canvas-doc-btn"
+            onClick={() => onClose(nodeKey)}
+            title="Back to calendar card"
+            type="button"
+          >
+            <Minimize2 size={11} />
+          </button>
+          <button
+            className="canvas-doc-btn canvas-doc-btn--close"
+            onClick={() => onClose(nodeKey)}
+            title="Close"
+            type="button"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      </div>
+
+      {/* Editor body */}
+      <div className="canvas-doc-body">
+        <MilindDoc
+          allDocs={allDocs}
+          doc={doc}
+          onAddToCalendar={() => {}}
+          onAddToTodo={() => {}}
+          onDocSelect={() => {}}
+          onSave={(updated) => onSaveDoc(nodeKey, updated)}
+          onSyncCalendarMeta={async () => {}}
+        />
+      </div>
+
+      {/* Resize handles */}
+      <div className="canvas-doc-resize-e" onPointerDown={(e) => startResize(e, "e")} />
+      <div className="canvas-doc-resize-s" onPointerDown={(e) => startResize(e, "s")} />
+      <div className="canvas-doc-resize-se" onPointerDown={(e) => startResize(e, "se")} />
+    </motion.div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  MilindObject (event card)                                          */
 /* ------------------------------------------------------------------ */
 
@@ -229,6 +418,7 @@ interface MilindObjectProps {
   event: CalendarEvent;
   initialPos: Position;
   canvasRect: DOMRect | null;
+  onLivePosUpdate: (key: string, pos: Position) => void;
   onPositionUpdate: (key: string, pos: Position) => void;
   onContextMenu: (key: string, pos: Position, screenPos: Position) => void;
   isLinking: boolean;
@@ -249,6 +439,7 @@ function MilindObject({
   event,
   initialPos,
   canvasRect,
+  onLivePosUpdate,
   onPositionUpdate,
   onContextMenu,
   isLinking,
@@ -278,17 +469,18 @@ function MilindObject({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPos.x, initialPos.y, x, y]);
 
+  // Live ref update only — keeps SVG lines smooth without React re-renders.
   useEffect(() => {
     const unX = x.on("change", (latest) => {
       posRef.current = { ...posRef.current, x: latest };
-      onPositionUpdate(key, posRef.current);
+      onLivePosUpdate(key, posRef.current);
     });
     const unY = y.on("change", (latest) => {
       posRef.current = { ...posRef.current, y: latest };
-      onPositionUpdate(key, posRef.current);
+      onLivePosUpdate(key, posRef.current);
     });
     return () => { unX(); unY(); };
-  }, [key, x, y, onPositionUpdate]);
+  }, [key, x, y, onLivePosUpdate]);
 
   const handleDragStart = () => {
     isDragging.current = true;
@@ -439,8 +631,10 @@ export function NodeCanvasView({
   const [notes, setNotes] = useState<Record<string, MilindNote[]>>({});
   const [connections, setConnections] = useState<[string, string][]>([]);
 
-  /* Shared sidebar tasks */
-  const [sidebarTasks, setSidebarTasks] = useState<Task[]>([]);
+  /* Shared sidebar tasks — sourced from the EntityStore, the single source of
+   * truth for tasks across every view (calendar, sidebar, canvas, docs). */
+  const sidebarTasks = useTasks();
+  const { updateTask, addDoc, updateDoc } = useEntityActions();
 
   /* Task node positions (for free-floating tasks on canvas) */
   const [taskNodePositions, setTaskNodePositions] = useState<Record<string, Position>>({});
@@ -462,6 +656,16 @@ export function NodeCanvasView({
   /* Pending note from milindDocs panel */
   const [pendingNote, setPendingNote] = useState<PanelNote | null>(null);
 
+  /* Canvas doc nodes — floating milindDoc editors */
+  const [canvasDocNodes, setCanvasDocNodes] = useState<Record<string, { doc: MilindDocFile; pos: Position }>>({});
+  const [convertedEventKeys, setConvertedEventKeys] = useState<Set<string>>(new Set());
+  /* The docs library is the EntityStore's, not a private copy. This component
+   * used to hydrate `libraryDocs` from localStorage once on mount and write
+   * back to it directly, which meant canvas-authored docs never reached
+   * milindDrive and Drive-sourced docs never showed up in canvas @mentions.
+   * Reading the store keeps every view on one source of truth. */
+  const libraryDocs = useDocs();
+
   useEffect(() => {
     const raw = localStorage.getItem(CANVAS_PENDING_NOTE_KEY);
     if (raw) {
@@ -473,9 +677,20 @@ export function NodeCanvasView({
     }
   }, []);
 
+  /* Mirror of the store's docs for use inside callbacks that must see the
+   * latest library without being re-created (and re-registered) on every
+   * docs change. */
+  const docsRef = useRef(libraryDocs);
+  useEffect(() => { docsRef.current = libraryDocs; }, [libraryDocs]);
+
   /* Live position tracking for SVG (ref, no re-renders) */
   const livePosRef = useRef<Record<string, Position>>({});
   const rafRef = useRef(0);
+  // Drives the connection-line sync loop. The loop only runs while positions
+  // are actively changing (a drag/animation in flight); once a frame passes
+  // with nothing dirty it stops, so an idle canvas costs zero rAF time.
+  const linesDirtyRef = useRef(false);
+  const lineLoopRunningRef = useRef(false);
 
   /* Current week range */
   const currentWeekStart = useMemo(
@@ -505,30 +720,6 @@ export function NodeCanvasView({
     setExpandedCards(new Set());
     setAttachingTaskId(null);
   }, [wk]);
-
-  /* Load & sync sidebar tasks from localStorage */
-  useEffect(() => {
-    const load = () => {
-      const raw = localStorage.getItem(TASK_STORAGE_KEY);
-      if (!raw) { setSidebarTasks([]); return; }
-      try {
-        const parsed = JSON.parse(raw) as Task[];
-        setSidebarTasks(Array.isArray(parsed) ? parsed.map((t) => ({ ...t, importance: t.importance ?? ("medium" as TaskImportance) })) : []);
-      } catch {
-        setSidebarTasks([]);
-      }
-    };
-    load();
-    // Poll for changes from sidebar (since they're in separate components)
-    const interval = setInterval(load, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  /* Persist task updates back to shared storage */
-  const persistTasks = useCallback((updated: Task[]) => {
-    setSidebarTasks(updated);
-    saveJson(TASK_STORAGE_KEY, updated);
-  }, []);
 
   /* Measure canvas */
   useEffect(() => {
@@ -584,7 +775,52 @@ export function NodeCanvasView({
     });
   }, [sidebarTasks, canvasRect]);
 
-  /* Persist positions */
+  /* One pass: write current live positions into the SVG connection lines. */
+  const syncLines = useCallback(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const lines = svg.querySelectorAll<SVGLineElement>(".conn-line");
+    lines.forEach((line) => {
+      const from = line.dataset.from!;
+      const to = line.dataset.to!;
+      const fp = livePosRef.current[from];
+      const tp = livePosRef.current[to];
+      if (fp && tp) {
+        line.setAttribute("x1", String(fp.x + CARD_W / 2));
+        line.setAttribute("y1", String(fp.y + CARD_H / 2));
+        line.setAttribute("x2", String(tp.x + CARD_W / 2));
+        line.setAttribute("y2", String(tp.y + CARD_H / 2));
+      }
+    });
+  }, []);
+
+  /* Start the rAF sync loop if it isn't already running. The loop self-stops
+   * once a frame elapses with no new position changes, so it costs nothing
+   * while the canvas is idle (previously it ran at 60fps forever). */
+  const kickLineLoop = useCallback(() => {
+    linesDirtyRef.current = true;
+    if (lineLoopRunningRef.current) return;
+    lineLoopRunningRef.current = true;
+    const loop = () => {
+      const wasDirty = linesDirtyRef.current;
+      linesDirtyRef.current = false;
+      syncLines();
+      if (wasDirty) {
+        rafRef.current = requestAnimationFrame(loop);
+      } else {
+        lineLoopRunningRef.current = false;
+      }
+    };
+    rafRef.current = requestAnimationFrame(loop);
+  }, [syncLines]);
+
+  /* Live position update — ref only, no React re-render (called on every drag frame) */
+  const handleLivePosUpdate = useCallback((key: string, pos: Position) => {
+    livePosRef.current[key] = pos;
+    kickLineLoop();
+  }, [kickLineLoop]);
+
+  /* Persist positions — called once on drag end */
   const handlePositionUpdate = useCallback(
     (key: string, pos: Position) => {
       livePosRef.current[key] = pos;
@@ -597,38 +833,29 @@ export function NodeCanvasView({
     [wk]
   );
 
-  const handleTaskPositionUpdate = useCallback((id: string, pos: Position) => {
-    setTaskNodePositions((prev) => ({ ...prev, [id]: pos }));
-    // Also update canvasPos in the task itself
-    setSidebarTasks((prev) => {
-      const updated = prev.map((t) => t.id === id ? { ...t, canvasPos: pos } : t);
-      saveJson(TASK_STORAGE_KEY, updated);
-      return updated;
-    });
-  }, []);
+  /* Live task position — ref only, no React re-render */
+  const handleLiveTaskPosUpdate = useCallback((id: string, pos: Position) => {
+    livePosRef.current[id] = pos;
+    kickLineLoop();
+  }, [kickLineLoop]);
 
-  /* SVG line animation loop */
+  /* Persist task position — called once on drag end */
+  const handleTaskPositionUpdate = useCallback((id: string, pos: Position) => {
+    livePosRef.current[id] = pos;
+    setTaskNodePositions((prev) => ({ ...prev, [id]: pos }));
+    updateTask(id, { canvasPos: pos });
+  }, [updateTask]);
+
+  /* Position the connection lines once whenever the connection set changes.
+   * Continuous updates during a drag are handled by kickLineLoop, which only
+   * runs while positions are actually moving. */
   useEffect(() => {
-    const updateLines = () => {
-      if (!svgRef.current) { rafRef.current = requestAnimationFrame(updateLines); return; }
-      const lines = svgRef.current.querySelectorAll<SVGLineElement>(".conn-line");
-      lines.forEach((line) => {
-        const from = line.dataset.from!;
-        const to = line.dataset.to!;
-        const fp = livePosRef.current[from];
-        const tp = livePosRef.current[to];
-        if (fp && tp) {
-          line.setAttribute("x1", String(fp.x + CARD_W / 2));
-          line.setAttribute("y1", String(fp.y + CARD_H / 2));
-          line.setAttribute("x2", String(tp.x + CARD_W / 2));
-          line.setAttribute("y2", String(tp.y + CARD_H / 2));
-        }
-      });
-      rafRef.current = requestAnimationFrame(updateLines);
+    kickLineLoop();
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      lineLoopRunningRef.current = false;
     };
-    rafRef.current = requestAnimationFrame(updateLines);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [connections]);
+  }, [connections, kickLineLoop]);
 
   /* Track mouse for linking line */
   useEffect(() => {
@@ -747,14 +974,10 @@ export function NodeCanvasView({
   const handleReceiveAttach = useCallback(
     (targetEventKey: string) => {
       if (!attachingTaskId) return;
-      persistTasks(
-        sidebarTasks.map((t) =>
-          t.id === attachingTaskId ? { ...t, attachedToEventKey: targetEventKey, canvasPos: undefined } : t
-        )
-      );
+      updateTask(attachingTaskId, { attachedToEventKey: targetEventKey, canvasPos: undefined });
       setAttachingTaskId(null);
     },
-    [attachingTaskId, sidebarTasks, persistTasks]
+    [attachingTaskId, updateTask]
   );
 
   /* Attach pending note (from milindDocs panel) to an event */
@@ -775,29 +998,29 @@ export function NodeCanvasView({
   /* Detach task from event (back to free-floating) */
   const handleDetachTask = useCallback(
     (taskId: string) => {
-      persistTasks(
-        sidebarTasks.map((t) =>
-          t.id === taskId ? { ...t, attachedToEventKey: undefined } : t
-        )
-      );
+      updateTask(taskId, { attachedToEventKey: undefined });
     },
-    [sidebarTasks, persistTasks]
+    [updateTask]
   );
 
   /* Toggle attached task */
   const handleToggleAttachedTask = useCallback(
     (taskId: string) => {
-      persistTasks(sidebarTasks.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t)));
+      const current = sidebarTasks.find((t) => t.id === taskId);
+      if (!current) return;
+      updateTask(taskId, { completed: !current.completed });
     },
-    [sidebarTasks, persistTasks]
+    [sidebarTasks, updateTask]
   );
 
   /* Toggle free-floating task */
   const handleToggleFloatingTask = useCallback(
     (taskId: string) => {
-      persistTasks(sidebarTasks.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t)));
+      const current = sidebarTasks.find((t) => t.id === taskId);
+      if (!current) return;
+      updateTask(taskId, { completed: !current.completed });
     },
-    [sidebarTasks, persistTasks]
+    [sidebarTasks, updateTask]
   );
 
   /* Note actions */
@@ -844,6 +1067,116 @@ export function NodeCanvasView({
     if (ev) onOpenEvent(ev);
     setContextMenu(null);
   };
+
+  /* Open event as a floating milindDoc on the canvas */
+  const openAsCanvasDoc = () => {
+    if (!contextMenu) return;
+    const ev = weekEvents.find((e) => eventKey(e) === contextMenu.key);
+    if (!ev) return;
+    const k = contextMenu.key;
+    if (canvasDocNodes[k]) { setContextMenu(null); return; }
+    const pos = positions[k] || { x: 100, y: 100 };
+
+    // Reuse an existing doc for this event if the library already has one.
+    // `docsRef` mirrors the store so this stays correct even when the click
+    // handler was created before the most recent docs update.
+    const freshDocs = docsRef.current;
+    const existingDoc = freshDocs.find((d) => d.id === `event-doc-${ev.id}`)
+      || freshDocs.find((d) => d.calendarMeta?.eventId === ev.id);
+    const doc: MilindDocFile = existingDoc
+      ? { ...existingDoc, calendarMeta: { ...existingDoc.calendarMeta!, title: ev.title, start: ev.start, end: ev.end, location: ev.location, allDay: ev.allDay } }
+      : {
+          id: `event-doc-${ev.id}`,
+          title: ev.title,
+          content: ev.description
+            ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: ev.description }] }] }
+            : null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          links: [],
+          calendarMeta: {
+            eventId: ev.id,
+            calendarId: ev.calendarId,
+            title: ev.title,
+            start: ev.start,
+            end: ev.end,
+            description: ev.description,
+            location: ev.location,
+            allDay: ev.allDay,
+          },
+        };
+
+    setCanvasDocNodes((prev) => ({ ...prev, [k]: { doc, pos } }));
+    setConvertedEventKeys((prev) => new Set([...prev, k]));
+    bringToFront(k + ".doc");
+    setContextMenu(null);
+  };
+
+  const handleSaveCanvasDoc = useCallback((nodeKey: string, updated: MilindDocFile) => {
+    setCanvasDocNodes((prev) => {
+      if (!prev[nodeKey]) return prev;
+      return { ...prev, [nodeKey]: { ...prev[nodeKey], doc: updated } };
+    });
+    // Persist through the store so the edit reaches milindDrive and every
+    // other view, instead of only this tab's localStorage.
+    if (docsRef.current.some((d) => d.id === updated.id)) {
+      updateDoc(updated.id, updated);
+    } else {
+      addDoc(updated);
+    }
+    // Sync content back to Google Calendar event
+    if (updated.calendarMeta) {
+      const { eventId, calendarId, title, start, end, location, allDay } = updated.calendarMeta;
+      const description = tiptapToPlainText(updated.content);
+      void onSaveEvent({
+        calendarId,
+        eventId,
+        event: {
+          title,
+          description,
+          location: location ?? "",
+          start,
+          end,
+          allDay,
+          attendees: [],
+          recurrence: [],
+          reminders: { useDefault: true, overrides: [] },
+          eventType: "meeting",
+          colorId: "9",
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+      });
+    }
+  }, [onSaveEvent, addDoc, updateDoc]);
+
+  const handleCloseCanvasDoc = useCallback((nodeKey: string) => {
+    setCanvasDocNodes((prev) => {
+      const next = { ...prev };
+      delete next[nodeKey];
+      return next;
+    });
+    setConvertedEventKeys((prev) => {
+      const next = new Set(prev);
+      next.delete(nodeKey);
+      return next;
+    });
+  }, []);
+
+  /* Live doc position — ref only, no React re-render */
+  const handleDocLivePosUpdate = useCallback((_nodeKey: string, _pos: Position) => {
+    // Doc nodes don't feed SVG lines; just a no-op to satisfy the interface.
+  }, []);
+
+  /* Persist doc position — called once on drag end */
+  const handleDocNodePositionUpdate = useCallback((nodeKey: string, pos: Position) => {
+    setCanvasDocNodes((prev) => {
+      if (!prev[nodeKey]) return prev;
+      return { ...prev, [nodeKey]: { ...prev[nodeKey], pos } };
+    });
+  }, []);
+
+  /* Hide events that have been opened as canvas doc nodes */
+  const visibleWeekEvents = weekEvents.filter((e) => !convertedEventKeys.has(eventKey(e)));
 
   /* Week label */
   const weekLabel = `${format(currentWeekStart, "MMM d")} – ${format(currentWeekEnd, "MMM d, yyyy")}`;
@@ -919,7 +1252,7 @@ export function NodeCanvasView({
         </svg>
 
         {/* Event objects */}
-        {weekEvents.map((event) => {
+        {visibleWeekEvents.map((event) => {
           const k = eventKey(event);
           const pos = positions[k] || { x: 100, y: 100 };
           livePosRef.current[k] = pos;
@@ -939,6 +1272,7 @@ export function NodeCanvasView({
               onDeleteNote={deleteNote}
               onDetachTask={handleDetachTask}
               onLinkTarget={handleLinkTarget}
+              onLivePosUpdate={handleLivePosUpdate}
               onPositionUpdate={handlePositionUpdate}
               onReceiveAttach={!!pendingNote ? handleAttachPendingNote : handleReceiveAttach}
               onToggleAttachedTask={handleToggleAttachedTask}
@@ -959,6 +1293,7 @@ export function NodeCanvasView({
               onAttach={(taskId) => setAttachingTaskId(taskId)}
               onBringToFront={bringToFront}
               onDetach={handleDetachTask}
+              onLivePosUpdate={handleLiveTaskPosUpdate}
               onPositionUpdate={handleTaskPositionUpdate}
               onToggle={handleToggleFloatingTask}
               task={task}
@@ -968,7 +1303,7 @@ export function NodeCanvasView({
         })}
 
         {/* Empty state */}
-        {weekEvents.length === 0 && freeTasks.length === 0 && (
+        {visibleWeekEvents.length === 0 && freeTasks.length === 0 && (
           <div className="canvas-empty">
             <p>No events this week</p>
             <p className="canvas-empty-hint">Navigate to a week with events or create new ones</p>
@@ -992,6 +1327,9 @@ export function NodeCanvasView({
             </button>
             <button onClick={() => { toggleExpand(contextMenu.key); setContextMenu(null); }} type="button">
               <Pencil size={14} /> {expandedCards.has(contextMenu.key) ? "Collapse" : "Expand"}
+            </button>
+            <button onClick={openAsCanvasDoc} type="button">
+              <FileText size={14} /> Edit as milindDoc
             </button>
             <button onClick={openInEditor} type="button">
               <Pencil size={14} /> Edit event
@@ -1029,6 +1367,26 @@ export function NodeCanvasView({
             </button>
           </motion.div>
         )}
+
+        {/* Floating milindDoc nodes */}
+        <AnimatePresence>
+          {Object.entries(canvasDocNodes).map(([k, { doc, pos }]) => (
+            <CanvasDocNode
+              key={k}
+              allDocs={libraryDocs}
+              canvasRect={canvasRect}
+              doc={doc}
+              initialPos={pos}
+              nodeKey={k}
+              onBringToFront={(key) => bringToFront(key)}
+              onClose={handleCloseCanvasDoc}
+              onLivePosUpdate={handleDocLivePosUpdate}
+              onPositionUpdate={handleDocNodePositionUpdate}
+              onSaveDoc={handleSaveCanvasDoc}
+              zIndex={(zIndices[k + ".doc"] || 0) + 500}
+            />
+          ))}
+        </AnimatePresence>
       </div>
 
       {/* Mode indicators */}

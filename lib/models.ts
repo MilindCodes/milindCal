@@ -53,6 +53,9 @@ export interface CalendarEvent {
   eventType: EventTypeId;
   color: string;
   colorId: string;
+  /** Google's per-event version tag. Changes whenever the event changes, so
+   *  it's a cheap O(1) "has this event been modified?" check on the client. */
+  etag?: string;
 }
 
 export interface GoogleEventPayload {
@@ -73,11 +76,60 @@ export interface GoogleEventPayload {
   timeZone: string;
 }
 
+export const GOOGLE_EVENT_COLORS = [
+  { id: "1",  hex: "#a4bdfc", name: "Lavender" },
+  { id: "2",  hex: "#7ae7bf", name: "Sage" },
+  { id: "3",  hex: "#dbadff", name: "Grape" },
+  { id: "4",  hex: "#ff887c", name: "Flamingo" },
+  { id: "5",  hex: "#fbd75b", name: "Banana" },
+  { id: "6",  hex: "#ffb878", name: "Tangerine" },
+  { id: "7",  hex: "#46d6db", name: "Peacock" },
+  { id: "8",  hex: "#e1e1e1", name: "Graphite" },
+  { id: "9",  hex: "#5484ed", name: "Blueberry" },
+  { id: "10", hex: "#51b749", name: "Basil" },
+  { id: "11", hex: "#dc2127", name: "Tomato" },
+] as const;
+
 export const TASK_STORAGE_KEY = "milindcal.tasks.v1";
 export const KANBAN_COLUMNS_KEY = "milindcal.kanban.columns.v1";
-export const DOCS_KEY = "milindcal.docs.current.v1";
+export const DOCS_KEY = "milindcal.docs.current.v1"; // legacy single-doc key (used for migration)
+export const DOCS_LIBRARY_KEY = "milindcal.docs.library.v2";
 export const PANEL_NOTES_KEY = "milindcal.panel.notes.v1";
 export const CANVAS_PENDING_NOTE_KEY = "milindcal.canvas.pending-note";
+
+/** Calendar event metadata attached to a milindDoc when converted from a calendar event. */
+export interface MilindDocCalendarMeta {
+  eventId: string;
+  calendarId: string;
+  title: string;
+  start: string;
+  end: string;
+  description?: string;
+  location?: string;
+  allDay: boolean;
+}
+
+/** A single document in the milindDocs library. */
+export interface MilindDocFile {
+  id: string;
+  title: string;
+  /** Tiptap JSON content — stored as plain JSON object */
+  content: Record<string, unknown> | null;
+  createdAt: number;
+  updatedAt: number;
+  /** Calendar metadata — present when doc was converted from a calendar event */
+  calendarMeta?: MilindDocCalendarMeta;
+  /** IDs of other milindDocs that this doc @mentions */
+  links: string[];
+  /** Position in the graph view */
+  graphPos?: { x: number; y: number };
+  /** Custom color for the graph node */
+  nodeColor?: string;
+  /** Manually drawn connections to other doc IDs (distinct from @mention links) */
+  graphLinks?: string[];
+  /** True when this doc was auto-created from a calendar event description */
+  autoCreatedFromCalendar?: boolean;
+}
 
 export interface PanelNote {
   id: string;
@@ -138,6 +190,12 @@ export interface GmailMessageSummary {
 
 export interface GmailMessageDetail extends GmailMessageSummary {
   to: string;
+  cc?: string;
   body: string;
   htmlBody?: string;
+}
+
+export interface GmailContact {
+  name: string;
+  email: string;
 }
