@@ -89,6 +89,9 @@ export default function RootLayout({
           <div className="orb orb-2" />
           <div className="orb orb-3" />
         </div>
+        <a className="skip-link" href="#main-content">
+          Skip to main content
+        </a>
         <Providers>{children}</Providers>
         <CursorTrail />
       </body>

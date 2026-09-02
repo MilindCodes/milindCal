@@ -3,7 +3,7 @@ import { BrandMark } from "@/components/brand-mark";
 
 export default function NotFound() {
   return (
-    <main className="signin-page">
+    <main className="signin-page" id="main-content" tabIndex={-1}>
       <section className="signin-card">
         <BrandMark showTagline />
         <p className="eyebrow">404</p>

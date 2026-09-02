@@ -7864,3 +7864,55 @@ a.primary-button {
   gap: 0.5rem;
   text-decoration: none;
 }
+
+/* ── Keyboard focus ────────────────────────────────────────────────────
+ *
+ * There was no app-wide :focus-visible rule, so tabbing through milindCal
+ * moved an invisible focus point — only two isolated components styled it.
+ * That's compounded by the custom cursor: with the native pointer hidden,
+ * the focus ring is often the only positional feedback on screen.
+ *
+ * :focus-visible (not :focus) means mouse clicks don't draw a ring, so this
+ * costs the pointer experience nothing. */
+:where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--cherry);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Windows High Contrast / forced-colors: the custom outline colour is
+ * discarded there, so fall back to the system highlight. */
+@media (forced-colors: active) {
+  :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* ── Skip link ─────────────────────────────────────────────────────────
+ * The workspace puts a toolbar and a calendar grid ahead of the main
+ * content, so keyboard users had a long tab journey on every page load. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -100px;
+  z-index: 100;
+  padding: 10px 16px;
+  background: var(--cherry);
+  color: #fff;
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  text-decoration: none;
+  transition: top 120ms ease;
+}
+
+.skip-link:focus {
+  top: 8px;
+}
+
+/* Skip-link targets are focusable only so the jump moves the caret; they
+ * should never render a focus ring of their own. */
+#main-content:focus,
+#main-content:focus-visible {
+  outline: none;
+}

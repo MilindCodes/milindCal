@@ -777,9 +777,14 @@ export function MilindDoc({
   const [wordCount, setWordCount] = useState(0);
   const [charCount, setCharCount] = useState(0);
 
+  /* Re-seed the drafts only when a *different* doc is opened. Depending on
+   * doc.title / doc.calendarMeta as the linter suggests would reset the
+   * user's in-progress edits every time the parent pushed an updated doc
+   * object back down — which it does on every debounced save. */
   useEffect(() => {
     setCalMetaDraft(doc.calendarMeta ?? null);
     setTitleDraft(doc.title || "Untitled");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.id]);
 
   const allDocsRef = useRef<MilindDocFile[]>(allDocs);

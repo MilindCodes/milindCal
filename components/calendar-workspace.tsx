@@ -1340,6 +1340,8 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     <LayoutGroup>
     <UniversalDragLayer onDrop={handleUniversalDrop}>
     <motion.main 
+      id="main-content"
+      tabIndex={-1}
       className={`workspace${taskBoardExpanded ? " task-board-open" : ""}`} 
       ref={workspaceRef}
       style={{

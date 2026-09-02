@@ -26,7 +26,7 @@ export default function Error({
   }, [error]);
 
   return (
-    <main className="signin-page">
+    <main className="signin-page" id="main-content" tabIndex={-1}>
       <section className="signin-card">
         <BrandMark />
         <p className="eyebrow">Something broke</p>
