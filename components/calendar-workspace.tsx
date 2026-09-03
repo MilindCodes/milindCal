@@ -13,8 +13,6 @@ import { signIn } from "next-auth/react";
 import { AuthActions } from "@/components/auth-actions";
 import { BrandMark } from "@/components/brand-mark";
 import { EntityStoreProvider, useEntityActions, useTasks } from "@/components/entity-store-context";
-import { EventEditor } from "@/components/event-editor";
-import { NewCalendarDialog } from "@/components/new-calendar-dialog";
 import dynamic from "next/dynamic";
 import { CalendarEventTile } from "@/components/calendar-event-tile";
 import { TasksSidebar } from "@/components/tasks-sidebar";
@@ -36,6 +34,20 @@ import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile,
  */
 const NodeCanvasView = dynamic(
   () => import("@/components/node-canvas-view").then((m) => m.NodeCanvasView),
+  { ssr: false },
+);
+
+/* Both of these are always-mounted but internally gated on an `open` prop, so
+ * every visitor downloaded and mounted them whether or not they ever created
+ * or edited an event. They're deferred until first opened, then kept mounted
+ * so their exit animations still run on close. */
+const EventEditor = dynamic(
+  () => import("@/components/event-editor").then((m) => m.EventEditor),
+  { ssr: false },
+);
+
+const NewCalendarDialog = dynamic(
+  () => import("@/components/new-calendar-dialog").then((m) => m.NewCalendarDialog),
   { ssr: false },
 );
 
@@ -221,6 +233,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     }
   }, [eventEditorOpen]);
   const [calendarDialogOpen, setCalendarDialogOpen] = useState(false);
+
+  /* Once opened, stay mounted: unmounting on close would cut off the exit
+   * animation and re-fetch the chunk on the next open. */
+  const [editorEverOpened, setEditorEverOpened] = useState(false);
+  useEffect(() => { if (eventEditorOpen) setEditorEverOpened(true); }, [eventEditorOpen]);
+  const [calendarDialogEverOpened, setCalendarDialogEverOpened] = useState(false);
+  useEffect(() => { if (calendarDialogOpen) setCalendarDialogEverOpened(true); }, [calendarDialogOpen]);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [draftWindow, setDraftWindow] = useState<EditorDraftWindow>({});
   const [liveSyncMode, setLiveSyncMode] = useState<"connecting" | "live" | "fallback">("connecting");
@@ -1935,7 +1954,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         ) : null}
       </AnimatePresence>
 
-      <EventEditor
+      {editorEverOpened && <EventEditor
         calendars={calendars}
         defaultCalendarId={selectedCalendarIds[0]}
         defaultEnd={draftWindow.end}
@@ -1964,7 +1983,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         onSubmit={saveEvent}
         onConvertToDoc={handleConvertToDoc}
         open={eventEditorOpen}
-      />
+      />}
 
       {/* Full-screen Canvas overlay — dramatic spring + blur transition */}
       <AnimatePresence>
@@ -2053,11 +2072,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         )}
       </AnimatePresence>
 
-      <NewCalendarDialog
-        onClose={() => setCalendarDialogOpen(false)}
-        onCreate={createCalendar}
-        open={calendarDialogOpen}
-      />
+      {calendarDialogEverOpened && (
+        <NewCalendarDialog
+          onClose={() => setCalendarDialogOpen(false)}
+          onCreate={createCalendar}
+          open={calendarDialogOpen}
+        />
+      )}
 
       {/* ── milindDocs overlay ── */}
       {hasMountedDocs && (

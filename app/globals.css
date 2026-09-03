@@ -8246,3 +8246,101 @@ a.primary-button {
 .tasks-sidebar .task-item:hover .task-toggle {
   border-color: var(--cherry);
 }
+
+/* ══ milindDocs: reading typography ═══════════════════════════════════
+ *
+ * Measured before touching this: prose was running at ~101 characters per
+ * line at 14.7px. The comfortable range for continuous reading is 60-75 —
+ * past that the eye loses its place on the return sweep, which is exactly the
+ * failure mode of a full-width text column. A docs surface lives or dies on
+ * this one number.
+ *
+ * Two changes: cap the measure, and set the body a little larger. 15.5px
+ * Georgia is a UI size, not a reading size; a serif at ~17px with a slightly
+ * tighter leading reads far better for long-form. Line-height comes down from
+ * 1.78 to 1.62 because generous leading compensates for a long measure — once
+ * the measure is right, that much air just fragments the paragraph.
+ */
+
+.milind-doc-content .ProseMirror {
+  /* The measure is the constraint; padding centres what's left. `ch` ties it
+   * to the actual font, so it holds if the typeface changes. */
+  max-width: 68ch;
+  margin-inline: auto;
+  padding: 56px 32px 96px;
+}
+
+/* Note: the pre-existing `.milind-doc-editor .ProseMirror` rule further up
+ * never applied — .milind-doc-editor is not an ancestor of the editor, so its
+ * `font-size: 15.5px !important` has been dead the whole time. The live
+ * selector is .milind-doc-content. */
+.milind-doc-content .ProseMirror {
+  font-size: 17px;
+  line-height: 1.62;
+}
+
+/* Wide blocks are exempt from the measure — a table or code sample clipped to
+ * 68ch would be worse than one that runs full width. */
+.milind-doc-content .ProseMirror .tableWrapper,
+.milind-doc-content .ProseMirror pre {
+  max-width: none;
+}
+
+/* ── Vertical rhythm ──
+ * Headings owned a fixed margin regardless of what preceded them, so a
+ * heading after a list sat as close as one after a paragraph. Space before a
+ * heading should be larger than the space after it, so the heading binds to
+ * the text it introduces rather than floating between blocks. */
+
+.milind-doc-content .ProseMirror h1 {
+  font-size: 2.1rem;
+  letter-spacing: -0.021em;
+  margin: 0 0 0.55em;
+}
+
+.milind-doc-content .ProseMirror h2 {
+  font-size: 1.42rem;
+  letter-spacing: -0.012em;
+  margin: 1.75em 0 0.45em;
+}
+
+.milind-doc-content .ProseMirror h3 {
+  font-size: 1.14rem;
+  letter-spacing: -0.006em;
+  margin: 1.4em 0 0.35em;
+}
+
+/* First heading in the document shouldn't push itself off the top. */
+.milind-doc-content .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.milind-doc-content .ProseMirror p {
+  margin: 0 0 0.75em;
+}
+
+.milind-doc-content .ProseMirror li > p {
+  margin-bottom: 0.2em;
+}
+
+/* Hanging quotation: the rule sits in the margin so the quote's text stays on
+ * the same optical left edge as the surrounding prose. */
+.milind-doc-content .ProseMirror blockquote {
+  margin: 1.5em 0;
+  padding-left: 1.1em;
+  border-left: 2px solid color-mix(in srgb, var(--cherry) 45%, transparent);
+  color: var(--ink-2);
+  font-style: italic;
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .milind-doc-content .ProseMirror blockquote {
+    border-left-color: var(--tide);
+  }
+}
+
+/* Numerals in a serif face default to old-style in some stacks, which reads
+ * oddly in an ordered list. Pin them to lining figures. */
+.milind-doc-content .ProseMirror ol {
+  font-variant-numeric: lining-nums tabular-nums;
+}
