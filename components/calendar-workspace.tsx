@@ -1649,7 +1649,11 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
           <motion.div className="header-identity" variants={itemVariants}>
             <BrandMark compact showTagline={false} layoutId="dive-app-brand" />
             <div className="header-meta">
-              <span className="header-username">{userName.split(" ")[0]}'s calendar</span>
+              {/* The page's h1. There was no h1 anywhere in the workspace, so a
+                * screen reader landed on a document with no top-level heading
+                * and nothing to orient by. This text already *is* the page
+                * title; it just wasn't marked as one. Styling is unchanged. */}
+              <h1 className="header-username">{userName.split(" ")[0]}&apos;s calendar</h1>
               <span className="header-sync-badge">
                 {liveSyncMode === "live" ? "● Live sync" : "○ Polling"}
               </span>

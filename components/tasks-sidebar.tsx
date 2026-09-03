@@ -1053,6 +1053,12 @@ export function TasksSidebar({
 
   return (
     <motion.aside
+      /* An <aside> nested inside <main> is not exposed as a complementary
+       * landmark, so this pane was invisible to landmark navigation. The
+       * explicit role restores it, and the label distinguishes it from any
+       * other complementary region. */
+      role="complementary"
+      aria-label="Tasks and email"
       animate={{ opacity: 1, x: 0 }}
       className={`tasks-sidebar${boardExpanded ? " board-expanded" : ""}${activePanel === "emails" && !boardExpanded ? " email-expanded" : ""}${emailBoardExpanded ? " email-reader-mode" : ""}`}
       initial={{ opacity: 0, x: 18 }}

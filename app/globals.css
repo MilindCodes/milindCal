@@ -462,6 +462,9 @@ textarea {
 }
 
 .header-username {
+  /* This is an h1 — reset the UA's heading margins and size so promoting it
+   * from a span changed the document outline and nothing else. */
+  margin: 0;
   font-size: 0.97rem;
   font-weight: 700;
   color: var(--text);
@@ -479,10 +482,23 @@ textarea {
   white-space: nowrap;
 }
 
+/* This targeted an h1 that did not exist — the workspace header had no
+ * heading at all until the calendar title was promoted to one. Left in place
+ * for any future large header title, but the calendar title opts out below,
+ * since it is a compact label, not a display heading. */
 .app-header h1 {
   margin: 2px 0 0;
   font-size: 1.9rem;
   letter-spacing: 0.02em;
+}
+
+/* Higher specificity than `.app-header h1` so promoting the span to a heading
+ * changed the document outline and nothing visual. */
+.app-header h1.header-username {
+  margin: 0;
+  font-size: 0.97rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .eyebrow {
