@@ -52,6 +52,29 @@ function formatDue(dateStr: string): string {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Empty state                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * "No tasks yet." was a dead end. An empty board is the first thing a new
+ * user sees, and in milindCal it is also the best place to teach the single
+ * idea the whole app rests on: a task dragged onto the calendar does not
+ * become a copy, it *is* the same record with a time on it. Saying that here
+ * costs nothing — the space is already empty.
+ */
+const BoardEmptyState = memo(function BoardEmptyState() {
+  return (
+    <div className="board-empty">
+      <p className="board-empty__lead">Nothing here yet.</p>
+      <p className="board-empty__hint">
+        Add one above — then drag it onto the calendar to give it a time, or
+        into milindDocs to write against it. It stays the same item either way.
+      </p>
+    </div>
+  );
+});
+
+/* ------------------------------------------------------------------ */
 /*  Kanban Card                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -434,7 +457,7 @@ const TimelineView = memo(function TimelineView({
 
   return (
     <div className="board-panel timeline-panel">
-      {groups.length === 0 && <p className="board-empty">No tasks yet.</p>}
+      {groups.length === 0 && <BoardEmptyState />}
       {groups.map((group) => (
         <div className="timeline-group" key={group.key}>
           <div
@@ -1339,7 +1362,7 @@ export function TasksSidebar({
                       />
                     ))}
                   </AnimatePresence>
-                  {tasks.length === 0 && <p className="board-empty">No tasks yet.</p>}
+                  {tasks.length === 0 && <BoardEmptyState />}
                 </div>
               )
             ) : (
@@ -1364,6 +1387,9 @@ export function TasksSidebar({
                     />
                   ))}
                 </AnimatePresence>
+                {/* The compact sidebar is the default view, so this is the
+                  * empty state most people actually meet. */}
+                {tasks.length === 0 && <BoardEmptyState />}
               </motion.div>
             )}
           </motion.div>

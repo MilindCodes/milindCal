@@ -3782,11 +3782,26 @@ textarea {
 }
 
 .board-empty {
-  font-size: 0.8rem;
-  color: var(--muted);
   text-align: center;
-  padding: 32px 16px;
-  opacity: 0.7;
+  padding: 34px 20px;
+  /* No blanket opacity: it dimmed the lead line as much as the hint and made
+   * the whole block read as disabled rather than simply quiet. Each line
+   * carries its own weight instead. */
+}
+
+.board-empty__lead {
+  margin: 0 0 6px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.board-empty__hint {
+  margin: 0 auto;
+  max-width: 30ch;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--muted);
 }
 
 /* Description preview in list items */
