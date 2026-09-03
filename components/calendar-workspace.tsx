@@ -19,6 +19,7 @@ import { TasksSidebar } from "@/components/tasks-sidebar";
 import { UniversalDragLayer, useUniversalDroppable, type UniversalDropEvent } from "@/components/universal-drag-layer";
 import { entityKey, eventKey, parseEventId, type EntityKey, type UniversalDragPayload } from "@/lib/entity-store";
 import { DEFAULT_SHEET, type SheetData } from "@/lib/sheet";
+import { humanizeError } from "@/lib/errors";
 import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, Task } from "@/lib/models";
 
 /* ── Lazily-loaded heavy views ──
@@ -807,7 +808,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       );
     } catch (loadError) {
       if ((loadError as Error).name === "AbortError") return;
-      setError(loadError instanceof Error ? loadError.message : "Something went wrong");
+      setError(humanizeError(loadError, "Something went wrong"));
     } finally {
       setLoading(false);
     }
@@ -919,7 +920,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       }
     } catch (loadError) {
       if ((loadError as Error).name === "AbortError") return;
-      setError(loadError instanceof Error ? loadError.message : "Unable to load events");
+      setError(humanizeError(loadError, "Unable to load events"));
     } finally {
       if (!options?.silent) {
         setLoading(false);
@@ -1463,7 +1464,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
       await readEvents({ silent: true, force: true });
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save event");
+      setError(humanizeError(saveError, "Unable to save event"));
       throw saveError;
     }
   };
@@ -1481,7 +1482,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       setEventEditorOpen(false);
       await readEvents({ silent: true, force: true });
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete event");
+      setError(humanizeError(deleteError, "Unable to delete event"));
       throw deleteError;
     }
   };
@@ -1595,7 +1596,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
       await readCalendars();
     } catch (calendarError) {
-      setError(calendarError instanceof Error ? calendarError.message : "Unable to create calendar");
+      setError(humanizeError(calendarError, "Unable to create calendar"));
       throw calendarError;
     }
   };
