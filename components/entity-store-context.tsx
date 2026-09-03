@@ -286,6 +286,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         if (patch.dueDate !== undefined) docPatch.dueDate = patch.dueDate;
         if (patch.columnId !== undefined) docPatch.columnId = patch.columnId;
         if (patch.body !== undefined) docPatch.content = patch.body;
+        if (patch.sheet !== undefined) docPatch.sheet = patch.sheet;
         updateDocRef.current(id, docPatch);
       }
       return;
@@ -333,6 +334,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         const taskPatch: Partial<Task> = {};
         if (patch.title !== undefined) taskPatch.title = patch.title;
         if (patch.content !== undefined) taskPatch.body = patch.content;
+        if (patch.sheet !== undefined) taskPatch.sheet = patch.sheet;
         if (patch.completed !== undefined) taskPatch.completed = patch.completed;
         if (patch.importance !== undefined) taskPatch.importance = patch.importance;
         if (patch.dueDate !== undefined) taskPatch.dueDate = patch.dueDate;
@@ -560,6 +562,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         dueDate: d.dueDate,
         columnId: d.columnId,
         body: d.content,
+        sheet: d.sheet,
         start: d.calendarMeta?.start,
         end: d.calendarMeta?.end,
         allDay: d.calendarMeta?.allDay,
@@ -576,6 +579,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         id: t.id,
         title: t.title,
         content: t.body,
+        sheet: t.sheet,
         createdAt: t.createdAt,
         updatedAt: t.createdAt,
         links: [],
@@ -617,6 +621,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
       if (patch.allDay !== undefined) taskPatch.allDay = patch.allDay;
       if (patch.body !== undefined) taskPatch.body = patch.body;
       if (patch.canvasPos !== undefined) taskPatch.canvasPos = patch.canvasPos;
+      if (patch.sheet !== undefined) taskPatch.sheet = patch.sheet;
       updateTask(id, taskPatch);
       return true;
     }
@@ -631,6 +636,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
       if (patch.columnId !== undefined) docPatch.columnId = patch.columnId;
       if (patch.graphPos !== undefined) docPatch.graphPos = patch.graphPos;
       if (patch.nodeColor !== undefined) docPatch.nodeColor = patch.nodeColor;
+      if (patch.sheet !== undefined) docPatch.sheet = patch.sheet;
       // A doc that gains a time carries it in calendarMeta, which is also what
       // the Google projection reads.
       if (patch.start !== undefined || patch.end !== undefined) {

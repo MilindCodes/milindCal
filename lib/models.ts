@@ -1,3 +1,5 @@
+import type { SheetData } from "./sheet";
+
 export type EventTypeId = "meeting" | "focus" | "personal" | "travel" | "other";
 
 export interface EventType {
@@ -137,6 +139,9 @@ export interface MilindDocFile {
   importance?: TaskImportance;
   dueDate?: string;
   columnId?: string;
+
+  /** Sheet facet — same meaning as on Task. */
+  sheet?: SheetData;
 }
 
 export interface PanelNote {
@@ -189,6 +194,11 @@ export interface Task {
    * milindDocs editor — it is not converted into a doc and gets no linked
    * copy. Tiptap JSON, same shape as MilindDocFile.content. */
   body?: Record<string, unknown> | null;
+
+  /* ── Sheet facet ─────────────────────────────────────────────────
+   * Present means this same record also opens in the grid. Cells are
+   * sparse A1-keyed raw strings; see lib/sheet.ts. */
+  sheet?: SheetData;
 }
 
 export interface KanbanColumn {

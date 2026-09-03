@@ -27,6 +27,7 @@
  */
 
 import type { CalendarEvent, MilindDocFile, Task, TaskImportance } from "./models";
+import { DEFAULT_SHEET, type SheetData } from "./sheet";
 
 /** Tiptap document JSON. Deliberately loose — we never introspect it here. */
 export type RichBody = Record<string, unknown>;
@@ -62,6 +63,9 @@ export interface MilindRecord {
   start?: string;
   end?: string;
   allDay?: boolean;
+
+  /** Sparse grid data. Present means it opens in the sheet view. */
+  sheet?: SheetData;
 
   /** Present means it appears on the task board. */
   status?: RecordStatus;
@@ -118,6 +122,7 @@ export interface MilindRecord {
 export const isScheduled = (r: MilindRecord): boolean => Boolean(r.start);
 export const isActionable = (r: MilindRecord): boolean => r.status !== undefined;
 export const hasBody = (r: MilindRecord): boolean => r.body !== null && r.body !== undefined;
+export const hasSheet = (r: MilindRecord): boolean => r.sheet !== undefined;
 export const isDone = (r: MilindRecord): boolean => r.status === "done";
 
 /** Every view a record currently qualifies for. A record with a start time,
@@ -127,6 +132,7 @@ export function facetsOf(r: MilindRecord): ViewAffinity[] {
   if (isScheduled(r)) out.push("calendar");
   if (isActionable(r)) out.push("task");
   if (hasBody(r)) out.push("doc");
+  if (hasSheet(r)) out.push("sheet");
   return out;
 }
 
@@ -188,6 +194,12 @@ export function ensureBody(r: MilindRecord): Partial<MilindRecord> {
   };
 }
 
+/** Give a record grid data so it opens in the sheet view. */
+export function ensureSheet(r: MilindRecord): Partial<MilindRecord> {
+  if (hasSheet(r)) return {};
+  return { sheet: { ...DEFAULT_SHEET, cells: {} }, updatedAt: Date.now() };
+}
+
 /** The patch that a drop onto `target` implies for `record`. Returning an
  *  empty object means the drop is a no-op — the record already has that
  *  facet, so there is nothing to change. */
@@ -207,6 +219,8 @@ export function facetPatch(
       return makeActionable(record, hint?.columnId);
     case "doc":
       return ensureBody(record);
+    case "sheet":
+      return ensureSheet(record);
     default:
       return {};
   }
@@ -230,6 +244,7 @@ export function recordFromTask(t: Task): MilindRecord {
     dueDate: t.dueDate,
     columnId: t.columnId,
     canvasPos: t.canvasPos,
+    sheet: t.sheet,
     createdAt: t.createdAt,
     updatedAt: t.createdAt,
     affinity: "task",
@@ -252,6 +267,7 @@ export function taskFromRecord(r: MilindRecord): Task {
     dueDate: r.dueDate,
     columnId: r.columnId,
     canvasPos: r.canvasPos,
+    sheet: r.sheet,
     source: r.source,
     asanaGid: r.asanaGid,
     asanaProjectName: r.asanaProjectName,

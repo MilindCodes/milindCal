@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "test:sheet": "tsx scripts/sheet-formula-test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

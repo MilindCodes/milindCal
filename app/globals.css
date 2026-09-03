@@ -8344,3 +8344,177 @@ a.primary-button {
 .milind-doc-content .ProseMirror ol {
   font-variant-numeric: lining-nums tabular-nums;
 }
+
+/* ══ Sheet view ═══════════════════════════════════════════════════════
+ *
+ * The fourth face of a record. Deliberately quieter than a typical
+ * spreadsheet: hairline rules in the ink colour rather than hard grey,
+ * paper-toned headers, and the selection ring in cherry so it reads as part
+ * of milindCal rather than a bolted-on grid.
+ */
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--salt);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.sheet__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper-1);
+  flex-shrink: 0;
+}
+
+.sheet__ref {
+  min-width: 46px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--salt);
+  text-align: center;
+}
+
+.sheet__formula {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--ink);
+  outline: none;
+}
+
+.sheet__grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+}
+
+/* The grid owns focus, not individual cells: 24 rows x 8 columns would be
+ * 192 tab stops, making it impossible to tab past the sheet. Arrow keys move
+ * the selection instead, which is also what spreadsheet users expect. */
+.sheet__grid:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--cherry);
+}
+
+.sheet__row {
+  display: grid;
+  align-items: stretch;
+}
+
+.sheet__row--head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.sheet__corner,
+.sheet__colhead,
+.sheet__rowhead {
+  background: var(--paper-2);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-ui);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.sheet__rowhead {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet__colhead.is-active,
+.sheet__rowhead.is-active {
+  background: color-mix(in srgb, var(--cherry) 12%, var(--paper-2));
+  color: var(--cherry-ink);
+}
+
+.sheet__cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--salt);
+  font-size: 0.78rem;
+  color: var(--ink);
+  cursor: cell;
+  overflow: hidden;
+}
+
+.sheet__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Numbers right-align and use tabular figures so columns of digits line up —
+ * the single thing that most makes a grid readable as data. */
+.sheet__cell.is-num {
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet__cell.is-error {
+  color: var(--cherry);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.sheet__cell.is-selected {
+  /* Inset ring rather than an outline so the selection never shifts layout
+   * or gets clipped by the neighbouring cell's border. */
+  box-shadow: inset 0 0 0 2px var(--cherry);
+  background: color-mix(in srgb, var(--cherry) 4%, var(--salt));
+}
+
+.sheet__editor {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  color: var(--ink);
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .sheet__cell.is-selected { background: var(--salt); }
+  .sheet__colhead.is-active,
+  .sheet__rowhead.is-active { background: var(--sand); }
+}
+
+/* The sheet takes the calendar grid's place inside the shell, so the app
+ * header, view switcher and task sidebar all stay put — switching to Sheet is
+ * a change of view, not a takeover of the window. */
+.sheet-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 8px;
+}

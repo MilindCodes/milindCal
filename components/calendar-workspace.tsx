@@ -12,12 +12,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 import { AuthActions } from "@/components/auth-actions";
 import { BrandMark } from "@/components/brand-mark";
-import { EntityStoreProvider, useEntityActions, useTasks } from "@/components/entity-store-context";
+import { EntityStoreProvider, useEntityActions, useRecords, useTasks } from "@/components/entity-store-context";
 import dynamic from "next/dynamic";
 import { CalendarEventTile } from "@/components/calendar-event-tile";
 import { TasksSidebar } from "@/components/tasks-sidebar";
 import { UniversalDragLayer, useUniversalDroppable, type UniversalDropEvent } from "@/components/universal-drag-layer";
 import { entityKey, eventKey, parseEventId, type EntityKey, type UniversalDragPayload } from "@/lib/entity-store";
+import { DEFAULT_SHEET, type SheetData } from "@/lib/sheet";
 import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, Task } from "@/lib/models";
 
 /* ── Lazily-loaded heavy views ──
@@ -41,6 +42,11 @@ const NodeCanvasView = dynamic(
  * every visitor downloaded and mounted them whether or not they ever created
  * or edited an event. They're deferred until first opened, then kept mounted
  * so their exit animations still run on close. */
+const SheetView = dynamic(
+  () => import("@/components/sheet-view").then((m) => m.SheetView),
+  { ssr: false },
+);
+
 const EventEditor = dynamic(
   () => import("@/components/event-editor").then((m) => m.EventEditor),
   { ssr: false },
@@ -56,7 +62,7 @@ const MilindDocsSection = dynamic(
   { ssr: false },
 );
 
-type CalendarView = "timeGridDay" | "timeGridWeek" | "dayGridMonth" | "multiMonthYear" | "nodeCanvas";
+type CalendarView = "timeGridDay" | "timeGridWeek" | "dayGridMonth" | "multiMonthYear" | "nodeCanvas" | "sheet";
 
 interface CalendarWorkspaceProps {
   userName: string;
@@ -165,7 +171,8 @@ const VIEW_LABELS: Record<CalendarView, string> = {
   timeGridWeek: "Week",
   dayGridMonth: "Month",
   multiMonthYear: "Year",
-  nodeCanvas: "Canvas"
+  nodeCanvas: "Canvas",
+  sheet: "Sheet"
 };
 
 const VIEW_OPTIONS = [
@@ -173,7 +180,8 @@ const VIEW_OPTIONS = [
   { label: "Week", value: "timeGridWeek" },
   { label: "Month", value: "dayGridMonth" },
   { label: "Year", value: "multiMonthYear" },
-  { label: "Canvas", value: "nodeCanvas" }
+  { label: "Canvas", value: "nodeCanvas" },
+  { label: "Sheet", value: "sheet" }
 ] as const;
 
 // How far beyond the visible range to pre-fetch on each load.
@@ -192,6 +200,7 @@ export function CalendarWorkspace(props: CalendarWorkspaceProps) {
 
 function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const tasks = useTasks();
+  const records = useRecords();
   const { addTask, addDoc, updateTask, updateRecord, link, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
   const calendarRef = useRef<FullCalendar | null>(null);
   const calendarFrameRef = useRef<HTMLDivElement | null>(null);
@@ -248,8 +257,38 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const [expandedDateEvents, setExpandedDateEvents] = useState<CalendarEvent[]>([]);
   const [expandedAnchorRect, setExpandedAnchorRect] = useState<DOMRect | null>(null);
 
+  /* The sheet shows whichever record currently carries sheet data. Editing
+   * writes back through updateRecord, so the grid is not a separate document
+   * — it is one more face of a record that may also be scheduled or on the
+   * board. */
+  const activeSheetRecord = useMemo(
+    () => records.find((r) => r.sheet !== undefined),
+    [records],
+  );
+
+  const handleSheetChange = useCallback(
+    (next: SheetData) => {
+      if (activeSheetRecord) {
+        updateRecord(activeSheetRecord.id, { sheet: next });
+        return;
+      }
+      // No record has a sheet yet — materialise one so the view isn't a dead
+      // end, and give it a body-less, timeless record that is *only* a sheet.
+      addTask({
+        id: Math.random().toString(36).slice(2, 10),
+        title: "Untitled sheet",
+        completed: false,
+        createdAt: Date.now(),
+        importance: "medium",
+        sheet: next,
+      });
+    },
+    [activeSheetRecord, updateRecord, addTask],
+  );
+
   const calendarHeight = view === "multiMonthYear" ? "auto" : "100%";
   const isCanvasView = view === "nodeCanvas";
+  const isSheetView = view === "sheet";
 
   /* ── milindDocs elastic scroll ── */
   const workspaceRef = useRef<HTMLElement | null>(null);
@@ -1047,7 +1086,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
   const changeView = useCallback((nextView: CalendarView) => {
     setView(nextView);
-    if (nextView !== "nodeCanvas") {
+    if (nextView !== "nodeCanvas" && nextView !== "sheet") {
       calendarRef.current?.getApi().changeView(nextView);
     }
   }, []);
@@ -1739,7 +1778,22 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         </motion.div>
 
 
-        {isCanvasView ? null : (
+        {isSheetView ? (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            className="sheet-pane"
+            initial={{ opacity: 0, y: 10 }}
+            transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <SheetView
+              onChange={handleSheetChange}
+              sheet={activeSheetRecord?.sheet ?? DEFAULT_SHEET}
+              title={activeSheetRecord?.title ?? "Sheet"}
+            />
+          </motion.div>
+        ) : null}
+
+        {isCanvasView || isSheetView ? null : (
           <motion.div
             className={`calendar-frame ${loading ? "loading" : ""}${calendarDroppable.isOver ? " universal-droppable--active" : ""}`}
             ref={setCalendarFrameNode}
