@@ -988,15 +988,20 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
    * as well as on the board. Give a scheduled task the "task:" id prefix so
    * click and drag handlers can route back to the record they came from. */
   const fullCalendarEvents = useMemo<EventInput[]>(() => {
+    // FullCalendar's own background/border painting is switched off: a flat
+    // saturated block is loud and forces white-on-colour text that fails at
+    // small sizes. The tile renders its own tinted surface with a saturated
+    // rail and dark ink instead, and carries the accent through extendedProps.
     const out: EventInput[] = events.map((event) => ({
       id: `${event.calendarId}::${event.id}`,
       title: event.title,
       start: event.start,
       end: event.end,
       allDay: event.allDay,
-      backgroundColor: event.color,
-      borderColor: event.color,
-      textColor: event.color ? getTextColorForBg(event.color) : "#f0f4ff"
+      backgroundColor: "transparent",
+      borderColor: "transparent",
+      textColor: "inherit",
+      extendedProps: { accent: event.color || "#4f8cff" },
     }));
 
     for (const task of tasks) {
@@ -1010,10 +1015,11 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         start: task.start,
         end: task.end,
         allDay: task.allDay ?? false,
-        backgroundColor: color,
-        borderColor: color,
-        textColor: getTextColorForBg(color),
+        backgroundColor: "transparent",
+        borderColor: "transparent",
+        textColor: "inherit",
         classNames: task.completed ? ["fc-record-done"] : undefined,
+        extendedProps: { accent: color },
       });
     }
 
@@ -1178,24 +1184,29 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const renderEventContent = useCallback((arg: EventContentArg) => {
     // Scheduled tasks render with a completion checkbox instead of a drag
     // handle — same record as the board row, so it carries the same affordance.
+    const accent = (arg.event.extendedProps?.accent as string) || "#4f8cff";
+
     if (arg.event.id.startsWith("task:")) {
       const taskId = arg.event.id.slice("task:".length);
       const task = tasksRef.current.find((t) => t.id === taskId);
       return (
-        <div className="fc-event-tile-inner fc-event-tile-inner--task">
+        <div className="milind-tile milind-tile--task" style={{ "--tile-accent": accent } as React.CSSProperties}>
           <button
             aria-label={task?.completed ? "Mark task as open" : "Mark task as done"}
             aria-pressed={task?.completed ?? false}
-            className="fc-task-check"
+            className="milind-tile__check"
             onClick={(e) => {
               e.stopPropagation();
               updateTask(taskId, { completed: !task?.completed });
             }}
             type="button"
           >
-            {task?.completed ? <Check size={11} /> : <Circle size={11} />}
+            {task?.completed ? <Check size={10} strokeWidth={3} /> : null}
           </button>
-          <span className="fc-event-tile-title">{arg.event.title}</span>
+          <span className="milind-tile__body">
+            <span className="milind-tile__title">{arg.event.title}</span>
+            {arg.timeText ? <span className="milind-tile__time">{arg.timeText}</span> : null}
+          </span>
         </div>
       );
     }
@@ -1203,15 +1214,21 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     const ev = eventsById.get(arg.event.id);
     if (!ev) {
       // Fall back to default text when we can't resolve (e.g. external drop preview)
-      return <div className="fc-event-tile-inner"><span className="fc-event-tile-title">{arg.event.title}</span></div>;
+      return (
+        <div className="milind-tile" style={{ "--tile-accent": accent } as React.CSSProperties}>
+          <span className="milind-tile__body"><span className="milind-tile__title">{arg.event.title}</span></span>
+        </div>
+      );
     }
     return (
-      <CalendarEventTile
-        event={ev}
-        timeText={arg.timeText}
-        isStart={arg.isStart}
-        allDay={arg.event.allDay}
-      />
+      <div className="milind-tile" style={{ "--tile-accent": accent } as React.CSSProperties}>
+        <CalendarEventTile
+          event={ev}
+          timeText={arg.timeText}
+          isStart={arg.isStart}
+          allDay={arg.event.allDay}
+        />
+      </div>
     );
   }, [eventsById, updateTask]);
 
