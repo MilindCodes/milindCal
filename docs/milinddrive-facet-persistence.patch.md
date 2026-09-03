@@ -6,6 +6,32 @@ to another service. Everything below is written against the real files as they
 are today, but **none of it has been run**: I have no database and cannot start
 that backend.
 
+## Back these files up first — milindDrive is not in git
+
+There is no `.git` in `milindDrive/`, so nothing here is recoverable by
+`git checkout` if an edit goes wrong. That is also the reason I did not apply
+this myself even where I could have: writing untested code into an unversioned
+service is a bad trade regardless of who is asking.
+
+Before you start:
+
+```bash
+cd ~/Library/CloudStorage/OneDrive-Personal/"Category Specific"/Personal/"Skill Building"/milindDrive
+cp backend/src/routes/tasks.ts backend/src/routes/tasks.ts.bak
+cp backend/src/routes/docs.ts  backend/src/routes/docs.ts.bak
+cp schema.sql schema.sql.bak
+```
+
+and take a database snapshot before the `ALTER TABLE` — Supabase can do this
+from the dashboard, or `pg_dump` if you are self-hosting. The column additions
+are additive and safe, but `ALTER COLUMN ... DROP NOT NULL` is the one step
+that changes an existing constraint.
+
+Honestly, `git init` in that directory would be worth ten minutes of your time
+independently of this patch.
+
+---
+
 Apply order: SQL first, then `tasks.ts`, then `docs.ts`.
 
 ---
