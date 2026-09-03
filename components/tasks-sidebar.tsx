@@ -527,7 +527,7 @@ export function TasksSidebar({
   /* Tasks state — single source of truth lives in EntityStoreProvider so
    * calendar-workspace and docs can mutate the same set. */
   const tasks = useTasks();
-  const { setTasks, openAsDoc } = useEntityActions();
+  const { setTasks, updateTask: storeUpdateTask, deleteTask: storeDeleteTask, openAsDoc } = useEntityActions();
 
   /* KanbanCard and TaskListItem are memo()'d, but that only pays off while
    * their props keep their identity. toggleTask/deleteTask/moveTaskToColumn
@@ -784,11 +784,20 @@ export function TasksSidebar({
     }
   };
 
+  /* These go through the store's mutators rather than setTasks.
+   *
+   * setTasks writes the *raw* tasks array, but the board renders the merged
+   * projection — a doc that carries a completion state appears here too. Its
+   * id isn't in the raw array, so `prev.map(...)` matched nothing and the
+   * click did nothing at all: no error, no visual change. The store's
+   * updateTask/deleteTask resolve which table actually backs an id and hand
+   * off accordingly, which is the whole point of them existing. */
+
   const toggleTask = useCallback((id: string) => {
     const task = tasksRef.current.find((t) => t.id === id);
     if (!task) return;
     const newCompleted = !task.completed;
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed: newCompleted } : t)));
+    storeUpdateTask(id, { completed: newCompleted });
     if (task.asanaGid) {
       fetch(`/api/asana/tasks/${task.asanaGid}`, {
         method: "PATCH",
@@ -796,29 +805,24 @@ export function TasksSidebar({
         body: JSON.stringify({ completed: newCompleted }),
       }).catch(() => {
         setAsanaError("Failed to sync completion to Asana");
-        setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed: task.completed } : t)));
+        storeUpdateTask(id, { completed: task.completed });
       });
     }
-  }, [setTasks]);
+  }, [storeUpdateTask]);
 
   const deleteTask = useCallback((id: string) => {
     const task = tasksRef.current.find((t) => t.id === id);
-    setTasks((prev) => prev.filter((t) => t.id !== id));
+    storeDeleteTask(id);
     if (task?.asanaGid) {
       fetch(`/api/asana/tasks/${task.asanaGid}`, { method: "DELETE" })
         .catch(() => setAsanaError("Failed to delete task in Asana"));
     }
-  }, [setTasks]);
+  }, [storeDeleteTask]);
 
   const moveTaskToColumn = useCallback((id: string, colId: string) => {
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
-        const isDone = colId === "done";
-        return { ...t, columnId: isDone ? undefined : colId, completed: isDone };
-      })
-    );
-  }, [setTasks]);
+    const isDone = colId === "done";
+    storeUpdateTask(id, { columnId: isDone ? undefined : colId, completed: isDone });
+  }, [storeUpdateTask]);
 
   /* ---------------------------------------------------------------- */
   /*  Email helpers                                                   */
