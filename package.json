@@ -14,7 +14,7 @@
     "test": "npm run test:sheet && npm run test:record && npm run test:errors && npm run test:rescue",
     "bench:record": "npx --yes tsx scripts/record-model-bench.mjs",
     "test:errors": "npx --yes tsx scripts/errors-test.mjs",
-    "test:rescue": "node scripts/sheet-rescue-test.mjs"
+    "test:rescue": "node scripts/facet-rescue-test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

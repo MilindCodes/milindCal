@@ -58,60 +58,103 @@ import {
 const MIGRATION_FLAG = "milindcal.migrated_to_drive.v1";
 
 /**
- * Local rescue for sheet data.
+ * Local rescue for facets the server cannot store yet.
  *
- * milindDrive's task and doc routes do not accept a `sheet` field yet, so a
- * spreadsheet written while signed in is dropped on save and gone by the next
- * reload. Every other facet has somewhere else to live — a doc's schedule
- * rides in `calendarMeta`, a doc's body in `content` — but a sheet has
- * nothing, which makes it the one facet whose loss is total.
+ * milindDrive's task and doc routes predate the record model, so several
+ * fields are dropped on save — their Zod schemas have no `.passthrough()`.
+ * Some facets survive anyway because they have somewhere else to live: a
+ * doc's schedule rides in `calendarMeta`, a doc's body in `content`, a task's
+ * completion in its own column. These do not:
  *
- * So sheets are mirrored here, keyed by record id. The server stays
- * authoritative: this is consulted *only* where the server returned no sheet
- * for a record it does know about. The moment milindDrive gains the column
- * (docs/milinddrive-facet-persistence.patch.md) the server value wins on every
- * read, this stops being consulted, and it can be deleted.
+ *   on a task   start, end, allDay, body, sheet, googleEventId, googleCalendarId
+ *   on a doc    completed, importance, dueDate, columnId, sheet
  *
- * Being honest about the limit: this is per-device. It stops you losing a
- * spreadsheet on reload; it does not make one follow you to another machine.
- * It is a floor under the data loss, not a substitute for the backend fix.
+ * Without this, scheduling a task, adopting a calendar event, putting a doc on
+ * the board, or typing into a spreadsheet all appear to work and are gone by
+ * the next reload.
+ *
+ * The server stays authoritative: a rescued value is applied only where the
+ * server returned nothing for that field, on a record it already knows about.
+ * So the moment milindDrive gains the columns
+ * (docs/milinddrive-facet-persistence.patch.md) the server wins on every read,
+ * this stops being consulted, and the whole block can be deleted.
+ *
+ * The limit, stated plainly: it is per-device. It stops you losing work on
+ * reload; it does not sync. A floor under the data loss, not a substitute for
+ * the backend fix.
  */
-const SHEET_RESCUE_KEY = "milindcal.sheets.rescue.v1";
+const FACET_RESCUE_KEY = "milindcal.facets.rescue.v1";
 
-type SheetRescue = Record<string, unknown>;
+const RESCUED_TASK_FIELDS = [
+  "start", "end", "allDay", "body", "sheet", "googleEventId", "googleCalendarId",
+] as const;
+const RESCUED_DOC_FIELDS = [
+  "completed", "importance", "dueDate", "columnId", "sheet",
+] as const;
 
-function readSheetRescue(): SheetRescue {
-  return readJSON<SheetRescue>(SHEET_RESCUE_KEY, {});
+type FacetRescue = Record<string, Record<string, unknown>>;
+
+function readFacetRescue(): FacetRescue {
+  return readJSON<FacetRescue>(FACET_RESCUE_KEY, {});
 }
 
-/** Mirror one record's sheet locally. Passing undefined forgets it, so a
- *  record whose sheet is cleared does not resurrect on the next load. */
-function writeSheetRescue(id: string, sheet: unknown): void {
-  const rescue = readSheetRescue();
-  if (sheet === undefined || sheet === null) {
-    if (rescue[id] === undefined) return;
-    delete rescue[id];
-  } else {
-    rescue[id] = sheet;
+/** Merge the rescuable parts of a patch into the mirror. An explicit null or
+ *  undefined forgets that field, so a cleared facet cannot come back. */
+function writeFacetRescue(
+  id: string,
+  patch: Record<string, unknown>,
+  fields: readonly string[],
+): void {
+  const rescue = readFacetRescue();
+  const entry: Record<string, unknown> = { ...(rescue[id] ?? {}) };
+  let touched = false;
+  for (const f of fields) {
+    if (!(f in patch)) continue;
+    touched = true;
+    const v = patch[f];
+    if (v === undefined || v === null) delete entry[f];
+    else entry[f] = v;
   }
-  writeBatched(SHEET_RESCUE_KEY, rescue);
+  if (!touched) return;
+  if (Object.keys(entry).length === 0) delete rescue[id];
+  else rescue[id] = entry;
+  writeBatched(FACET_RESCUE_KEY, rescue);
 }
 
-/** Re-attach locally-held sheets to records the server returned without one. */
-function restoreSheets<T extends { id: string; sheet?: unknown }>(records: T[]): T[] {
-  const rescue = readSheetRescue();
+function forgetFacetRescue(id: string): void {
+  const rescue = readFacetRescue();
+  if (rescue[id] === undefined) return;
+  delete rescue[id];
+  writeBatched(FACET_RESCUE_KEY, rescue);
+}
+
+/** Re-attach locally-held facets to records the server returned without them. */
+function restoreFacets<T extends { id: string }>(
+  records: T[],
+  fields: readonly string[],
+): T[] {
+  const rescue = readFacetRescue();
   if (Object.keys(rescue).length === 0) return records;
   let restored = 0;
   const out = records.map((r) => {
-    if (r.sheet !== undefined || rescue[r.id] === undefined) return r;
+    const entry = rescue[r.id];
+    if (!entry) return r;
+    const patch: Record<string, unknown> = {};
+    for (const f of fields) {
+      // Fill a genuine gap only — never override what the server sent.
+      if (entry[f] !== undefined && (r as Record<string, unknown>)[f] === undefined) {
+        patch[f] = entry[f];
+      }
+    }
+    if (Object.keys(patch).length === 0) return r;
     restored++;
-    return { ...r, sheet: rescue[r.id] };
+    return { ...r, ...patch };
   });
   if (restored > 0) {
     console.warn(
-      `[milindCal] Restored ${restored} spreadsheet(s) from local storage — ` +
-        "the server is not persisting sheet data yet, so these exist only on " +
-        "this device. See docs/milinddrive-facet-persistence.patch.md.",
+      `[milindCal] Restored facets on ${restored} record(s) from local storage — ` +
+        "the server is not persisting them yet, so they exist only on this device. " +
+        "See docs/milinddrive-facet-persistence.patch.md.",
     );
   }
   return out;
@@ -279,8 +322,8 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
       ]);
 
       // Re-attach any sheets the server dropped. No-op once it persists them.
-      setTasks(restoreSheets(remoteTasks));
-      setDocs(restoreSheets(remoteDocs));
+      setTasks(restoreFacets(remoteTasks, RESCUED_TASK_FIELDS));
+      setDocs(restoreFacets(remoteDocs, RESCUED_DOC_FIELDS));
       setLinks(remoteLinks);
       setHydrated(true);
     }
@@ -330,8 +373,8 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
 
   const addTask = useCallback((task: Task) => {
     setTasks((prev) => [task, ...prev]);
-    // A record created *as* a sheet never passes through updateRecord.
-    if (task.sheet !== undefined) writeSheetRescue(task.id, task.sheet);
+    // A record created with facets never passes through updateRecord.
+    writeFacetRescue(task.id, task as unknown as Record<string, unknown>, RESCUED_TASK_FIELDS);
     const token = tokenRef.current;
     if (token && task.source !== "asana") {
       driveCreateTask(token, task).catch(console.error);
@@ -349,10 +392,8 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         if (patch.dueDate !== undefined) docPatch.dueDate = patch.dueDate;
         if (patch.columnId !== undefined) docPatch.columnId = patch.columnId;
         if (patch.body !== undefined) docPatch.content = patch.body;
-        if (patch.sheet !== undefined) {
-        docPatch.sheet = patch.sheet;
-        writeSheetRescue(id, patch.sheet);
-      }
+        if (patch.sheet !== undefined) docPatch.sheet = patch.sheet;
+      writeFacetRescue(id, docPatch as Record<string, unknown>, RESCUED_DOC_FIELDS);
         updateDocRef.current(id, docPatch);
       }
       return;
@@ -370,7 +411,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const deleteTask = useCallback((id: string) => {
-    writeSheetRescue(id, undefined);
+    forgetFacetRescue(id);
     if (!tasksRef.current.some((t) => t.id === id)) {
       if (docsRef.current.some((d) => d.id === id)) deleteDocRef.current(id);
       return;
@@ -443,7 +484,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
   }, [updateTask]);
 
   const deleteDoc = useCallback((id: string) => {
-    writeSheetRescue(id, undefined);
+    forgetFacetRescue(id);
     if (!docsRef.current.some((d) => d.id === id)) {
       if (tasksRef.current.some((t) => t.id === id)) deleteTask(id);
       return;
@@ -692,11 +733,9 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
       if (patch.allDay !== undefined) taskPatch.allDay = patch.allDay;
       if (patch.body !== undefined) taskPatch.body = patch.body;
       if (patch.canvasPos !== undefined) taskPatch.canvasPos = patch.canvasPos;
-      if (patch.sheet !== undefined) {
-        taskPatch.sheet = patch.sheet;
-        // Server drops this today; keep a local copy so it survives reload.
-        writeSheetRescue(id, patch.sheet);
-      }
+      if (patch.sheet !== undefined) taskPatch.sheet = patch.sheet;
+      // Mirror everything the server drops so it survives a reload.
+      writeFacetRescue(id, taskPatch as Record<string, unknown>, RESCUED_TASK_FIELDS);
       updateTask(id, taskPatch);
       return true;
     }
