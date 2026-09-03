@@ -1501,8 +1501,8 @@ textarea {
 
 .task-importance-badge {
   color: var(--importance-color, var(--muted));
-  background: color-mix(in srgb, var(--importance-color, #6b7280) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--importance-color, #6b7280) 25%, transparent);
+  background: color-mix(in srgb, var(--importance-color, var(--ink-2)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--importance-color, var(--ink-2)) 25%, transparent);
 }
 
 .task-due-badge {
@@ -2509,7 +2509,11 @@ textarea {
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: rgba(31, 20, 22, 0.45);
+  /* Measured 2.92:1 at 9.1px. Alpha-derived greys are the recurring cause of
+   * these: 0.45 over paper lands well under the 4.5 floor for text this
+   * small, and small uppercase is already harder to read. --muted is a solid
+   * token chosen to clear it. */
+  color: var(--muted);
 }
 
 .fc-day-header-num {
@@ -4843,9 +4847,10 @@ textarea {
   align-items: center;
   gap: 6px;
   font-size: 0.8rem;
-  color: #5f6368;
+  /* 3.9:1 measured against paper. */
+  color: var(--ink-2);
   background: transparent;
-  border: 1px solid #dadce0;
+  border: 1px solid var(--line-2);
   border-radius: 20px;
   padding: 5px 12px;
   cursor: pointer;
@@ -5064,7 +5069,7 @@ textarea {
 }
 
 .sticky-note-action.muted {
-  color: #9aa0a6;
+  color: var(--muted);
 }
 
 .sticky-note-action.canvas-btn {
@@ -5089,7 +5094,7 @@ textarea {
 .docs-sticky-empty {
   text-align: center;
   padding: 24px 8px;
-  color: #9aa0a6;
+  color: var(--muted);
   font-size: 0.82rem;
 }
 
@@ -5190,7 +5195,7 @@ textarea {
 }
 
 .gd-doc-title-input::placeholder {
-  color: #9ca3af;
+  color: var(--ink-2);
   font-style: italic;
   font-weight: 400;
 }
@@ -5204,7 +5209,7 @@ textarea {
 
 .gd-saved-status {
   font-size: 0.72rem;
-  color: #9aa0a6;
+  color: var(--muted);
   padding: 2px 8px;
   border-radius: 10px;
   transition: all 0.3s ease;
@@ -5262,7 +5267,7 @@ textarea {
   border-radius: 50%;
   border: none;
   background: transparent;
-  color: #4b5563;
+  color: var(--ink);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -5431,7 +5436,7 @@ textarea {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #9aa0a6;
+  color: var(--muted);
   margin-bottom: 7px;
 }
 
@@ -5453,7 +5458,7 @@ textarea {
   align-items: center;
   justify-content: center;
   font-size: 9px;
-  color: #9aa0a6;
+  color: var(--muted);
   position: relative;
 }
 
@@ -5532,7 +5537,7 @@ textarea {
 
 .milind-doc-content .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
-  color: #9aa0a6;
+  color: var(--muted);
   font-style: normal;
   pointer-events: none;
   float: left;
@@ -5731,7 +5736,8 @@ textarea {
   padding: 8px 12px;
   font-size: 0.8rem;
   font-weight: 600;
-  color: rgba(139, 69, 19, 0.6);
+  /* 2.64:1 measured — another alpha-derived grey. */
+  color: var(--ink-2);
   background: rgba(255, 255, 255, 0.4);
   border: 1px solid transparent;
   cursor: pointer;
@@ -5838,7 +5844,7 @@ textarea {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #9aa0a6;
+  color: var(--muted);
   padding: 4px 10px 6px;
 }
 
@@ -5927,14 +5933,14 @@ textarea {
 }
 
 .gd-search input::placeholder {
-  color: #9ca3af;
+  color: var(--ink-2);
 }
 
 .gd-search-clear {
   background: none;
   border: none;
   cursor: pointer;
-  color: #9ca3af;
+  color: var(--ink-2);
   padding: 2px;
   line-height: 1;
   border-radius: 4px;
@@ -5972,7 +5978,7 @@ textarea {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #9aa0a6;
+  color: var(--muted);
   padding: 10px 10px 4px;
   flex-shrink: 0;
 }
@@ -6076,7 +6082,7 @@ textarea {
   align-items: center;
   gap: 3px;
   font-size: 0.68rem;
-  color: #9aa0a6;
+  color: var(--muted);
 }
 
 .gd-file-rename-input {
@@ -6142,7 +6148,7 @@ textarea {
   padding: 32px 16px;
   text-align: center;
   gap: 8px;
-  color: #9ca3af;
+  color: var(--ink-2);
 }
 
 .gd-empty-state svg {
@@ -6153,20 +6159,22 @@ textarea {
 .gd-empty-state p {
   font-size: 0.88rem;
   font-weight: 600;
-  color: #6b7280;
+  color: var(--ink-2);
   margin: 0;
 }
 
 .gd-empty-state span {
   font-size: 0.76rem;
   line-height: 1.5;
+  /* Inherited a 2.29:1 grey from its container. */
+  color: var(--ink-2);
 }
 
 /* Sidebar footer */
 .gd-sidebar-footer {
   padding: 8px 12px 10px;
   font-size: 0.68rem;
-  color: #9ca3af;
+  color: var(--ink-2);
   border-top: 1px solid rgba(0,0,0,0.06);
   flex-shrink: 0;
   text-align: center;
@@ -6214,7 +6222,7 @@ textarea {
   justify-content: center;
   text-align: center;
   font-size: 0.82rem;
-  color: #9aa0a6;
+  color: var(--muted);
   padding: 24px;
   line-height: 1.6;
 }
@@ -6364,7 +6372,7 @@ textarea {
   border-radius: 50%;
   border: 1.5px dashed #dadce0;
   background: none;
-  color: #9aa0a6;
+  color: var(--muted);
   font-size: 0.65rem;
   cursor: pointer;
   display: flex;
@@ -6416,7 +6424,7 @@ textarea {
 
 .doc-mention-list__empty {
   font-size: 0.75rem;
-  color: #9aa0a6;
+  color: var(--muted);
   padding: 6px 10px;
   text-align: center;
 }
@@ -6673,7 +6681,7 @@ textarea {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #9aa0a6;
+  color: var(--muted);
 }
 
 .doc-cal-field input {
@@ -6717,7 +6725,7 @@ textarea {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #9aa0a6;
+  color: var(--muted);
   margin-bottom: 10px;
 }
 
@@ -6755,7 +6763,7 @@ textarea {
   justify-content: center;
   flex: 1;
   gap: 14px;
-  color: #9aa0a6;
+  color: var(--muted);
   font-size: 0.88rem;
   text-align: center;
   padding: 32px;
@@ -7000,7 +7008,7 @@ textarea {
   gap: 8px;
   padding: 6px 96px;
   font-size: 0.71rem;
-  color: #9ca3af;
+  color: var(--ink-2);
   background: #ffffff;
   border-top: 1px solid rgba(0,0,0,0.05);
   user-select: none;
@@ -7010,7 +7018,7 @@ textarea {
 }
 
 .doc-save-indicator {
-  color: #9ca3af;
+  color: var(--ink-2);
   font-size: 0.71rem;
   transition: color 0.3s;
 }
@@ -7092,7 +7100,7 @@ textarea {
   align-items: center;
   gap: 3px;
   font-size: 0.67rem;
-  color: #9ca3af;
+  color: var(--ink-2);
 }
 
 .gd-file-meta-wc {
@@ -7122,9 +7130,9 @@ textarea {
   margin-top: 8px;
   padding: 7px 14px;
   border-radius: 8px;
-  border: 1.5px dashed #d1d5db;
+  border: 1.5px dashed var(--line-2);
   background: none;
-  color: #6b7280;
+  color: var(--ink-2);
   font-size: 0.79rem;
   font-family: inherit;
   cursor: pointer;
@@ -7166,7 +7174,7 @@ textarea {
   padding: 48px 32px;
   text-align: center;
   gap: 10px;
-  color: #9ca3af;
+  color: var(--ink-2);
   width: 100%;
 }
 
@@ -7178,13 +7186,13 @@ textarea {
 .docs-empty-state p {
   font-size: 1rem;
   font-weight: 600;
-  color: #4b5563;
+  color: var(--ink);
   margin: 0;
 }
 
 .docs-empty-state span {
   font-size: 0.82rem;
-  color: #9ca3af;
+  color: var(--ink-2);
   line-height: 1.6;
   max-width: 280px;
 }
@@ -7249,7 +7257,7 @@ textarea {
   border-radius: 8px;
   border: 1px solid rgba(0,0,0,0.1);
   background: transparent;
-  color: #6b7280;
+  color: var(--ink-2);
   cursor: pointer;
   transition: all 0.15s cubic-bezier(0.4,0,0.2,1);
   white-space: nowrap;
@@ -7275,7 +7283,7 @@ textarea {
   border-radius: 7px;
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: var(--ink-2);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -7346,7 +7354,7 @@ textarea {
   border-left: 3px solid #93c5fd;
   margin: 16px 0;
   padding: 10px 20px;
-  color: #4b5563;
+  color: var(--ink);
   background: rgba(239, 246, 255, 0.6);
   border-radius: 0 6px 6px 0;
   font-style: italic;
@@ -7495,7 +7503,8 @@ textarea {
 .docs-back-btn {
   background: rgba(0,0,0,0.05) !important;
   border: 1px solid rgba(0,0,0,0.1) !important;
-  color: rgba(0,0,0,0.5) !important;
+  /* was rgba(0,0,0,0.5) — measured 3.9:1 at 11.5px */
+  color: var(--ink-2) !important;
   border-radius: 8px !important;
   font-size: 11.5px !important;
   padding: 5px 11px !important;
@@ -7580,7 +7589,10 @@ textarea {
 }
 
 .docs-sidebar__tab {
-  color: rgba(0,0,0,0.38) !important;
+  /* was rgba(0,0,0,0.38) at 2.64:1, then --muted at 4.34:1 — both under the
+   * 4.5 floor for 11.5px. The active tab is distinguished by its background,
+   * so the inactive one doesn't need to be lighter than legible. */
+  color: var(--ink-2) !important;
   font-size: 11.5px !important;
   font-weight: 500 !important;
   border-radius: 6px !important;
@@ -7589,7 +7601,7 @@ textarea {
 }
 
 .docs-sidebar__tab:hover {
-  color: rgba(0,0,0,0.65) !important;
+  color: var(--ink) !important;
   background: rgba(0,0,0,0.04) !important;
 }
 
@@ -8123,8 +8135,12 @@ a.primary-button {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
+  /* No opacity here. `--ink-2` at 0.75 measured 4.28-4.48:1 against the
+   * tinted tile — under the 4.5 AA floor for text this size, and the tint
+   * varies by accent so some tiles were worse than others. The token alone
+   * clears it at every accent, and the smaller size plus lighter weight
+   * still reads as secondary without leaning on transparency. */
   color: var(--ink-2);
-  opacity: 0.75;
   white-space: nowrap;
 }
 
@@ -8173,7 +8189,10 @@ a.primary-button {
 .fc-record-done .milind-tile__title {
   text-decoration: line-through;
   text-decoration-thickness: 1px;
-  color: var(--muted);
+  /* `--muted` measured 4.37:1 here — just under AA. The strikethrough already
+   * carries "done" unambiguously, so the colour doesn't need to do that work
+   * too; --ink-2 keeps it visibly secondary and legible. */
+  color: var(--ink-2);
 }
 
 /* ══ Task cards ═══════════════════════════════════════════════════════
@@ -8231,7 +8250,10 @@ a.primary-button {
  * still scannable, no longer the loudest element in the row. */
 .task-importance-badge {
   background: color-mix(in srgb, var(--importance-color) 14%, transparent);
-  color: color-mix(in srgb, var(--importance-color) 72%, var(--ink));
+  /* Measured 3.48:1 at 8.96px with a 72% mix. Weighting further toward --ink
+   * keeps the hue reading as the importance colour while clearing the 4.5
+   * floor — at this size the chip's tint carries the signal anyway. */
+  color: color-mix(in srgb, var(--importance-color) 45%, var(--ink));
   border: 1px solid color-mix(in srgb, var(--importance-color) 26%, transparent);
   font-size: 0.64rem;
   font-weight: 600;
