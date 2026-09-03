@@ -5120,16 +5120,16 @@ textarea {
 }
 
 .sticky-note-action.canvas-btn {
-  color: #1a73e8;
+  color: var(--cherry);
   border-color: rgba(26, 115, 232, 0.3);
 }
 
 .sticky-note-action.canvas-btn:hover {
-  background: #e8f0fe;
+  background: var(--surface-soft);
 }
 
 .sticky-note-action.danger-btn {
-  color: #d93025;
+  color: var(--cherry);
   border-color: rgba(217, 48, 37, 0.2);
   padding: 4px 8px;
 }
@@ -5291,8 +5291,8 @@ textarea {
 }
 
 .gd-action-chip.active {
-  background: #e8f0fe;
-  color: #1a73e8;
+  background: var(--surface-soft);
+  color: var(--cherry);
   border-color: rgba(26, 115, 232, 0.35);
 }
 
@@ -5336,7 +5336,7 @@ textarea {
 
 .gd-toolbar-btn.active {
   background: rgba(26, 115, 232, 0.12);
-  color: #1a73e8;
+  color: var(--cherry);
 }
 
 .gd-toolbar-btn:disabled {
@@ -5417,8 +5417,8 @@ textarea {
 }
 
 .gd-style-option.active {
-  background: #e8f0fe;
-  color: #1a73e8;
+  background: var(--surface-soft);
+  color: var(--cherry);
 }
 
 .gd-style-option--normal { font-size: 0.85rem; }
@@ -5619,11 +5619,11 @@ textarea {
   padding: 1px 5px;
   font-size: 0.875em;
   font-family: "Roboto Mono", "Courier New", monospace;
-  color: #d93025;
+  color: var(--cherry);
 }
 
 .milind-doc-content .ProseMirror a {
-  color: #1a73e8;
+  color: var(--cherry);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -5681,7 +5681,7 @@ textarea {
 }
 
 .milind-doc-content .ProseMirror .column-resize-handle {
-  background-color: #1a73e8;
+  background-color: var(--cherry);
   bottom: -2px;
   pointer-events: none;
   position: absolute;
@@ -5861,8 +5861,8 @@ textarea {
 }
 
 .gd-icon-btn.active {
-  background: #e8f0fe;
-  color: #1a73e8;
+  background: var(--surface-soft);
+  color: var(--cherry);
 }
 
 /* Sort menu */
@@ -5916,8 +5916,8 @@ textarea {
 }
 
 .gd-sort-option.active {
-  background: #e8f0fe;
-  color: #1a73e8;
+  background: var(--surface-soft);
+  color: var(--cherry);
 }
 
 /* New doc button */
@@ -6079,8 +6079,8 @@ textarea {
   width: 26px;
   height: 26px;
   border-radius: var(--radius-sm);
-  background: #e8f0fe;
-  color: #1a73e8;
+  background: var(--surface-soft);
+  color: var(--cherry);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6089,7 +6089,7 @@ textarea {
 
 .gd-file-icon--cal {
   background: #fce8e6;
-  color: #d93025;
+  color: var(--cherry);
 }
 
 .gd-file-cal-dot {
@@ -6099,7 +6099,7 @@ textarea {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #d93025;
+  background: var(--cherry);
   border: 1.5px solid #ffffff;
 }
 
@@ -6121,7 +6121,7 @@ textarea {
 }
 
 .gd-file-item.active .gd-file-title {
-  color: #1a73e8;
+  color: var(--cherry);
 }
 
 .gd-file-meta {
@@ -6138,7 +6138,7 @@ textarea {
   font-weight: 500;
   color: #202124;
   background: #ffffff;
-  border: 1.5px solid #1a73e8;
+  border: 1.5px solid var(--cherry);
   border-radius: var(--radius-sm);
   padding: 2px 6px;
   outline: none;
@@ -6182,7 +6182,7 @@ textarea {
 
 .gd-file-action-btn--danger:hover {
   background: #fce8e6;
-  color: #d93025;
+  color: var(--cherry);
 }
 
 /* Empty state */
@@ -6295,12 +6295,12 @@ textarea {
 }
 
 .graph-node:hover {
-  border-color: #1a73e8;
+  border-color: var(--cherry);
   box-shadow: 0 3px 14px rgba(26,115,232,0.2);
 }
 
 .graph-node--active {
-  border-color: #1a73e8;
+  border-color: var(--cherry);
   box-shadow: 0 0 0 3px rgba(26,115,232,0.18), 0 4px 18px rgba(0,0,0,0.12);
   background: #ffffff;
 }
@@ -6310,7 +6310,7 @@ textarea {
 }
 
 .graph-node--cal.graph-node--active {
-  border-color: #d93025;
+  border-color: var(--cherry);
   box-shadow: 0 0 0 3px rgba(217,48,37,0.18), 0 4px 18px rgba(0,0,0,0.12);
 }
 
@@ -6332,7 +6332,7 @@ textarea {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #d93025;
+  background: var(--cherry);
   flex-shrink: 0;
   pointer-events: none;
 }
@@ -6430,8 +6430,8 @@ textarea {
 }
 
 .graph-color-clear:hover {
-  border-color: #d93025;
-  color: #d93025;
+  border-color: var(--cherry);
+  color: var(--cherry);
 }
 
 .graph-linking-indicator {
@@ -6498,8 +6498,8 @@ textarea {
 .doc-mention-node {
   display: inline-flex;
   align-items: center;
-  background: #e8f0fe;
-  color: #1a73e8;
+  background: var(--surface-soft);
+  color: var(--cherry);
   border-radius: var(--radius-sm);
   padding: 0 5px;
   font-size: 0.9em;
@@ -6601,7 +6601,7 @@ textarea {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #4285f4, #1a73e8);
+  background: linear-gradient(135deg, #4285f4, var(--cherry));
   color: #ffffff;
   flex-shrink: 0;
 }
@@ -6657,7 +6657,7 @@ textarea {
 }
 
 .doc-cal-card-title svg {
-  color: #1a73e8;
+  color: var(--cherry);
 }
 
 .doc-cal-card-actions {
@@ -6683,7 +6683,7 @@ textarea {
 
 .doc-cal-sync-btn:hover {
   background: #f1f3f4;
-  color: #1a73e8;
+  color: var(--cherry);
   border-color: rgba(26, 115, 232, 0.3);
 }
 
@@ -6745,7 +6745,7 @@ textarea {
 }
 
 .doc-cal-field input:focus {
-  border-color: #1a73e8;
+  border-color: var(--cherry);
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.15);
 }
 
@@ -6791,13 +6791,13 @@ textarea {
   border-radius: var(--radius-lg);
   border: 1px solid #dadce0;
   background: transparent;
-  color: #1a73e8;
+  color: var(--cherry);
   cursor: pointer;
   transition: all 0.12s;
 }
 
 .doc-backlinks__item:hover {
-  background: #e8f0fe;
+  background: var(--surface-soft);
   border-color: rgba(26,115,232,0.3);
 }
 
@@ -6817,7 +6817,7 @@ textarea {
 }
 
 .docs-empty-state .primary-button {
-  background: #1a73e8;
+  background: var(--cherry);
   color: #ffffff;
   border: none;
   border-radius: var(--radius-lg);
@@ -6868,7 +6868,7 @@ textarea {
   text-transform: uppercase;
   line-height: 1.1;
 }
-.universal-drag-badge--task  { background: #1a73e8; color: #fff; }
+.universal-drag-badge--task  { background: var(--cherry); color: #fff; }
 .universal-drag-badge--doc   { background: #7c5cff; color: #fff; }
 .universal-drag-badge--event { background: #22c55e; color: #0a0a0a; }
 .universal-drag-label {
@@ -7075,7 +7075,8 @@ textarea {
 }
 
 .doc-status-sep {
-  color: #d1d5db;
+  /* was #d1d5db at 1.42:1, then --muted at 4.34:1 */
+  color: var(--ink-2);
 }
 
 /* ── Context menu ── */
@@ -7152,7 +7153,8 @@ textarea {
 
 .gd-file-meta-wc {
   font-size: 0.65rem;
-  color: #d1d5db;
+  /* was #d1d5db at 2.64:1, then --muted at 4.34:1 */
+  color: var(--ink-2);
   background: rgba(0,0,0,0.04);
   border-radius: var(--radius-sm);
   padding: 1px 5px;
@@ -7160,7 +7162,8 @@ textarea {
 }
 
 .gd-footer-sep {
-  color: #d1d5db;
+  /* was #d1d5db at 1.52:1, then --muted at 4.34:1 */
+  color: var(--ink-2);
 }
 
 /* ── Empty state CTA button ── */
@@ -7189,7 +7192,7 @@ textarea {
 .gd-empty-cta:hover {
   background: rgba(26,115,232,0.05);
   border-color: rgba(26,115,232,0.4);
-  color: #1a73e8;
+  color: var(--cherry);
 }
 
 /* ── Focus mode ── */
@@ -7249,7 +7252,7 @@ textarea {
   padding: 10px 22px;
   border-radius: var(--radius-md);
   border: none;
-  background: linear-gradient(135deg, #1a73e8 0%, #1557b0 100%);
+  background: linear-gradient(135deg, var(--cherry) 0%, #1557b0 100%);
   color: #ffffff;
   font-size: 0.85rem;
   font-weight: 600;
@@ -7270,7 +7273,8 @@ textarea {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #d1d5db;
+  /* was #d1d5db at 1.33:1, then --muted at 4.34:1 */
+  color: var(--ink-2);
   padding: 10px 12px 4px;
   flex-shrink: 0;
 }
@@ -7318,7 +7322,7 @@ textarea {
 
 .gd-action-chip.active {
   background: rgba(26, 115, 232, 0.1);
-  color: #1a73e8;
+  color: var(--cherry);
   border-color: rgba(26, 115, 232, 0.3);
 }
 
@@ -7346,7 +7350,7 @@ textarea {
 
 .gd-icon-btn.active {
   background: rgba(26, 115, 232, 0.1);
-  color: #1a73e8;
+  color: var(--cherry);
 }
 
 /* ── File icon ── */
@@ -7357,7 +7361,7 @@ textarea {
   height: 28px;
   border-radius: var(--radius-md);
   background: rgba(26, 115, 232, 0.1);
-  color: #1a73e8;
+  color: var(--cherry);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -7381,7 +7385,7 @@ textarea {
 }
 
 .gd-file-item.active .gd-file-title {
-  color: #1a73e8;
+  color: var(--cherry);
   font-weight: 600;
 }
 
@@ -7428,7 +7432,7 @@ textarea {
   padding: 2px 6px;
   font-size: 0.875em;
   font-family: "JetBrains Mono", "Fira Code", "Roboto Mono", "Courier New", monospace;
-  color: #1a73e8;
+  color: var(--cherry);
 }
 
 /* ── Heading improvements ── */
@@ -7495,10 +7499,10 @@ textarea {
 .docs-section-brand {
   font-size: 0.92rem;
   font-weight: 700;
-  color: #1a73e8;
+  color: var(--cherry);
   letter-spacing: -0.02em;
   pointer-events: none;
-  background: linear-gradient(135deg, #1a73e8, #7c3aed);
+  background: linear-gradient(135deg, var(--cherry), #7c3aed);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -7664,7 +7668,8 @@ textarea {
 }
 
 .gd-sort-btn {
-  color: rgba(0,0,0,0.38) !important;
+  /* was rgba(0,0,0,0.38) at ~2.6:1, then --muted at 4.34:1 — both under 4.5 */
+  color: var(--ink-2) !important;
   font-size: 0.78rem !important;
   background: transparent !important;
   border: none !important;
@@ -7717,7 +7722,8 @@ textarea {
 .gd-file-meta,
 .gd-file-meta-time,
 .gd-file-meta-wc {
-  color: rgba(0,0,0,0.38) !important;
+  /* was rgba(0,0,0,0.38) at ~2.6:1, then --muted at 4.34:1 — both under 4.5 */
+  color: var(--ink-2) !important;
   font-size: 0.78rem !important;
 }
 
@@ -7750,7 +7756,8 @@ textarea {
 }
 
 .gd-footer-sep {
-  color: rgba(0,0,0,0.18) !important;
+  /* was rgba(0,0,0,0.18) at ~1.5:1, then --muted at 4.34:1 */
+  color: var(--ink-2) !important;
 }
 
 /* ── Sort popup ── */
@@ -7841,7 +7848,8 @@ textarea {
 .milind-doc-status-bar {
   background: rgba(239,236,230,0.88) !important;
   border-top: 1px solid rgba(0,0,0,0.06) !important;
-  color: rgba(0,0,0,0.38) !important;
+  /* was rgba(0,0,0,0.38) at ~2.6:1, then --muted at 4.34:1 — both under 4.5 */
+  color: var(--ink-2) !important;
   backdrop-filter: blur(8px) !important;
 }
 
