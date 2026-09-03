@@ -157,9 +157,17 @@ export interface Task {
   id: string;
   title: string;
   description?: string;
-  completed: boolean;
+
+  /* Optional on purpose. Presence of `completed` is what gives a record its
+   * task facet, exactly as `start` gives it a calendar facet and `body` a doc
+   * one. A record created purely as a sheet has no completion state and so
+   * does not belong on the board — before this was optional, the tasks table's
+   * NOT NULL column forced every sheet to masquerade as a task. */
+  completed?: boolean;
   createdAt: number;
-  importance: TaskImportance;
+  /** Optional for the same reason as `completed`: importance is part of the
+   *  task facet, so a record without that facet has none. */
+  importance?: TaskImportance;
   dueDate?: string; // ISO date string YYYY-MM-DD
   assigneeEmail?: string;
   /** Custom kanban column id — overrides importance-based placement */

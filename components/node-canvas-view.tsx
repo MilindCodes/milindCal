@@ -200,7 +200,7 @@ function TaskNode({
     }
   };
 
-  const color = IMPORTANCE_COLORS[task.importance];
+  const color = IMPORTANCE_COLORS[task.importance ?? "medium"];
   const dueDateFormatted = task.dueDate
     ? new Date(task.dueDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })
     : null;
@@ -543,7 +543,7 @@ function MilindObject({
               position: "absolute",
               left: CARD_W / 2 + ox - 50,
               top: CARD_H / 2 + oy - 12,
-              borderLeft: `2px solid ${IMPORTANCE_COLORS[task.importance]}`,
+              borderLeft: `2px solid ${IMPORTANCE_COLORS[task.importance ?? "medium"]}`,
             }}
             title="Double-click to detach"
             transition={{ repeat: Infinity, duration: 3.5 + i * 0.4, ease: "easeInOut" }}

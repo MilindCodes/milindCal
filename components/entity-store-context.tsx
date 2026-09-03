@@ -550,7 +550,10 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
    * never saved into the wrong table. */
 
   const tasksProjected = useMemo<Task[]>(() => {
-    const out = [...tasks];
+    // Only records that actually carry a task facet. A record stored in the
+    // tasks table but created as, say, a sheet has no completion state and
+    // does not belong on the board.
+    const out = tasks.filter((t) => t.completed !== undefined);
     for (const d of docs) {
       if (d.completed === undefined) continue;
       out.push({

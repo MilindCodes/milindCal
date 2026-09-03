@@ -281,12 +281,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       }
       // No record has a sheet yet — materialise one so the view isn't a dead
       // end, and give it a body-less, timeless record that is *only* a sheet.
+      // Deliberately no `completed`: this record is only a sheet. Giving it a
+      // completion state would put it on the task board, which is exactly the
+      // conflation the facet model exists to avoid.
       addTask({
         id: Math.random().toString(36).slice(2, 10),
         title: "Untitled sheet",
-        completed: false,
         createdAt: Date.now(),
-        importance: "medium",
         sheet: next,
       });
     },
@@ -1079,6 +1080,26 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
    * event and doesn't get a linked copy; it is the same record, rendered here
    * as well as on the board. Give a scheduled task the "task:" id prefix so
    * click and drag handlers can route back to the record they came from. */
+  /* Everything with a time, whichever table backs it. Reading `records`
+   * rather than the board's list means a record that is only a sheet, or only
+   * a doc, still appears on the calendar once it has a start. */
+  const scheduledRecords = useMemo(
+    () =>
+      records
+        .filter((r) => r.start)
+        .map((r) => ({
+          id: r.id,
+          title: r.title,
+          start: r.start,
+          end: r.end,
+          allDay: r.allDay,
+          completed: r.status === "done",
+          importance: r.importance ?? "medium",
+          googleEventId: r.google?.eventId,
+        })),
+    [records],
+  );
+
   const fullCalendarEvents = useMemo<EventInput[]>(() => {
     // FullCalendar's own background/border painting is switched off: a flat
     // saturated block is loud and forces white-on-colour text that fails at
@@ -1106,7 +1127,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       extendedProps: { accent: event.color || "#4f8cff" },
     }));
 
-    for (const task of tasks) {
+    for (const task of scheduledRecords) {
       if (!task.start) continue;
       const color = task.completed
         ? "#9ca3af"
@@ -1131,7 +1152,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     }
 
     return out;
-  }, [events, tasks]);
+  }, [events, tasks, scheduledRecords]);
 
   const changeView = useCallback((nextView: CalendarView) => {
     setView(nextView);

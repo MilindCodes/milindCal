@@ -40,7 +40,8 @@ const BOARD_VIEWS: BoardView[] = ["list", "kanban", "timeline"];
 function resolveColumnId(task: Task, columns: KanbanColumn[]): string {
   if (task.completed) return "done";
   if (task.columnId && columns.some((c) => c.id === task.columnId)) return task.columnId;
-  if (columns.some((c) => c.id === task.importance)) return task.importance;
+  const importance = task.importance ?? "medium";
+  if (columns.some((c) => c.id === importance)) return importance;
   const nonDone = columns.find((c) => c.id !== "done");
   return nonDone?.id ?? "done";
 }
@@ -90,7 +91,7 @@ const KanbanCard = memo(function KanbanCard({
 }) {
   const currentColId = resolveColumnId(task, columns);
   const currentCol = columns.find((c) => c.id === currentColId);
-  const borderColor = currentCol?.color ?? IMPORTANCE_COLORS[task.importance];
+  const borderColor = currentCol?.color ?? IMPORTANCE_COLORS[task.importance ?? "medium"];
   const dueFmt = task.dueDate ? formatDue(task.dueDate) : null;
   const drag = useUniversalDraggable(payloadFromTask(task));
 
@@ -223,9 +224,9 @@ const TaskListItem = memo(function TaskListItem({
         <div className="task-meta">
           <span
             className="task-importance-badge"
-            style={{ "--importance-color": IMPORTANCE_COLORS[task.importance] } as React.CSSProperties}
+            style={{ "--importance-color": IMPORTANCE_COLORS[task.importance ?? "medium"] } as React.CSSProperties}
           >
-            <Flag size={9} /> {IMPORTANCE_LABELS[task.importance]}
+            <Flag size={9} /> {IMPORTANCE_LABELS[task.importance ?? "medium"]}
           </span>
           {task.dueDate && (
             <span className="task-due-badge">
@@ -486,9 +487,9 @@ const TimelineView = memo(function TimelineView({
                   <div className="task-meta">
                     <span
                       className="task-importance-badge"
-                      style={{ "--importance-color": IMPORTANCE_COLORS[task.importance] } as React.CSSProperties}
+                      style={{ "--importance-color": IMPORTANCE_COLORS[task.importance ?? "medium"] } as React.CSSProperties}
                     >
-                      <Flag size={8} /> {IMPORTANCE_LABELS[task.importance]}
+                      <Flag size={8} /> {IMPORTANCE_LABELS[task.importance ?? "medium"]}
                     </span>
                     {task.dueDate && (
                       <span className="task-due-badge">
