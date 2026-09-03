@@ -30,6 +30,11 @@ import {
   type Task,
 } from "@/lib/models";
 import {
+  recordFromDoc,
+  recordFromTask,
+  type MilindRecord,
+} from "@/lib/record";
+import {
   fetchDocs,
   fetchTasks,
   fetchLinks,
@@ -74,6 +79,15 @@ interface EntityActions {
   openAsDoc: (key: EntityKey, seed?: { title?: string; description?: string }) => string | null;
   clearPendingOpenDoc: () => void;
 
+  /** Patch a record without caring which store backs it.
+   *
+   *  Tasks and docs still live in two tables, but that is storage detail —
+   *  callers work with one record space. This resolves the id to whichever
+   *  list holds it and applies the patch there, so a facet transition
+   *  (schedule / makeActionable / ensureBody) is a single call regardless of
+   *  where the record originated. Returns false when the id is unknown. */
+  updateRecord: (id: string, patch: Partial<MilindRecord>) => boolean;
+
   /** True when the Google OAuth refresh token has expired/been revoked.
    *  The user must re-authenticate to restore milindDrive sync. */
   driveAuthError: boolean;
@@ -82,6 +96,7 @@ interface EntityActions {
 const TasksContext = createContext<Task[] | null>(null);
 const DocsContext = createContext<MilindDocFile[] | null>(null);
 const LinksContext = createContext<LinkGraph | null>(null);
+const RecordsContext = createContext<MilindRecord[] | null>(null);
 const EntityActionsContext = createContext<EntityActions | null>(null);
 
 export function EntityStoreProvider({ children }: { children: ReactNode }) {
@@ -242,6 +257,14 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
     writeBatched(LINKS_STORAGE_KEY, links);
   }, [links, hydrated]);
 
+  /* A projected row (a doc on the board, a task in the docs list) is edited
+   * through whichever mutator that view happens to call. These forward refs
+   * let each mutator hand off to the other when the id isn't its own, so a
+   * projected row is never a silent no-op. An id lives in exactly one list, so
+   * the handoff cannot bounce back. */
+  const updateDocRef = useRef<(id: string, patch: Partial<MilindDocFile>) => void>(() => {});
+  const deleteDocRef = useRef<(id: string) => void>(() => {});
+
   // ── Task mutators ──────────────────────────────────────────────
 
   const addTask = useCallback((task: Task) => {
@@ -253,6 +276,21 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateTask = useCallback((id: string, patch: Partial<Task>) => {
+    // Not a task? Then it's a doc showing on the board — translate and hand off.
+    if (!tasksRef.current.some((t) => t.id === id)) {
+      if (docsRef.current.some((d) => d.id === id)) {
+        const docPatch: Partial<MilindDocFile> = { updatedAt: Date.now() };
+        if (patch.title !== undefined) docPatch.title = patch.title;
+        if (patch.completed !== undefined) docPatch.completed = patch.completed;
+        if (patch.importance !== undefined) docPatch.importance = patch.importance;
+        if (patch.dueDate !== undefined) docPatch.dueDate = patch.dueDate;
+        if (patch.columnId !== undefined) docPatch.columnId = patch.columnId;
+        if (patch.body !== undefined) docPatch.content = patch.body;
+        updateDocRef.current(id, docPatch);
+      }
+      return;
+    }
+
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     const token = tokenRef.current;
     if (token) {
@@ -265,6 +303,10 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const deleteTask = useCallback((id: string) => {
+    if (!tasksRef.current.some((t) => t.id === id)) {
+      if (docsRef.current.some((d) => d.id === id)) deleteDocRef.current(id);
+      return;
+    }
     const task = tasksRef.current.find((t) => t.id === id);
     setTasks((prev) => prev.filter((t) => t.id !== id));
     setLinks((prev) => pruneEntity(prev, entityKey("task", id)));
@@ -285,6 +327,21 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateDoc = useCallback((id: string, patch: Partial<MilindDocFile>) => {
+    // Not a doc? Then it's a task showing in the docs list — translate back.
+    if (!docsRef.current.some((d) => d.id === id)) {
+      if (tasksRef.current.some((t) => t.id === id)) {
+        const taskPatch: Partial<Task> = {};
+        if (patch.title !== undefined) taskPatch.title = patch.title;
+        if (patch.content !== undefined) taskPatch.body = patch.content;
+        if (patch.completed !== undefined) taskPatch.completed = patch.completed;
+        if (patch.importance !== undefined) taskPatch.importance = patch.importance;
+        if (patch.dueDate !== undefined) taskPatch.dueDate = patch.dueDate;
+        if (patch.columnId !== undefined) taskPatch.columnId = patch.columnId;
+        updateTask(id, taskPatch);
+      }
+      return;
+    }
+
     // React state update is always immediate (optimistic UI).
     setDocs((prev) =>
       prev.map((d) => (d.id === id ? { ...d, ...patch } : d)),
@@ -314,9 +371,14 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         }
       }, 800),
     );
-  }, []);
+  }, [updateTask]);
 
   const deleteDoc = useCallback((id: string) => {
+    if (!docsRef.current.some((d) => d.id === id)) {
+      if (tasksRef.current.some((t) => t.id === id)) deleteTask(id);
+      return;
+    }
+
     // Cancel any pending debounced patch for this doc.
     const timers = docPatchTimers.current;
     if (timers.has(id)) {
@@ -332,7 +394,10 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
     if (token) {
       driveDeleteDoc(token, id).catch(console.error);
     }
-  }, []);
+  }, [deleteTask]);
+
+  useEffect(() => { updateDocRef.current = updateDoc; }, [updateDoc]);
+  useEffect(() => { deleteDocRef.current = deleteDoc; }, [deleteDoc]);
 
   // ── Link mutators ──────────────────────────────────────────────
 
@@ -471,6 +536,129 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
     [setDocs, setLinks],
   );
 
+  /* ── Facet projections ────────────────────────────────────────────
+   *
+   * The board shows everything actionable and the docs list shows everything
+   * with a body — regardless of which table the row came from. A task that
+   * gained body content appears in docs; a doc that gained a completion state
+   * appears on the board. Same record, second view.
+   *
+   * These are what the Tasks/Docs contexts publish. The raw `tasks` / `docs`
+   * state stays separate and is what persistence writes, so a projected row is
+   * never saved into the wrong table. */
+
+  const tasksProjected = useMemo<Task[]>(() => {
+    const out = [...tasks];
+    for (const d of docs) {
+      if (d.completed === undefined) continue;
+      out.push({
+        id: d.id,
+        title: d.title || "Untitled",
+        completed: d.completed,
+        createdAt: d.createdAt,
+        importance: d.importance ?? "medium",
+        dueDate: d.dueDate,
+        columnId: d.columnId,
+        body: d.content,
+        start: d.calendarMeta?.start,
+        end: d.calendarMeta?.end,
+        allDay: d.calendarMeta?.allDay,
+      });
+    }
+    return out;
+  }, [tasks, docs]);
+
+  const docsProjected = useMemo<MilindDocFile[]>(() => {
+    const out = [...docs];
+    for (const t of tasks) {
+      if (t.body === undefined || t.body === null) continue;
+      out.push({
+        id: t.id,
+        title: t.title,
+        content: t.body,
+        createdAt: t.createdAt,
+        updatedAt: t.createdAt,
+        links: [],
+        completed: t.completed,
+        importance: t.importance,
+        dueDate: t.dueDate,
+        columnId: t.columnId,
+      });
+    }
+    return out;
+  }, [tasks, docs]);
+
+  // ── The one record space ───────────────────────────────────────
+  //
+  // Tasks and docs are two tables for storage reasons, but the app's domain
+  // has a single record type. This projects both into MilindRecord so every
+  // view can filter by facet (start -> calendar, status -> board, body ->
+  // editor) instead of by which table a row came from.
+
+  const records = useMemo<MilindRecord[]>(() => {
+    const out: MilindRecord[] = [];
+    for (const t of tasks) out.push(recordFromTask(t));
+    for (const d of docs) out.push(recordFromDoc(d));
+    return out;
+  }, [tasks, docs]);
+
+  /** Apply a record patch to whichever store actually holds the id. */
+  const updateRecord = useCallback((id: string, patch: Partial<MilindRecord>): boolean => {
+    if (tasksRef.current.some((t) => t.id === id)) {
+      const taskPatch: Partial<Task> = {};
+      if (patch.title !== undefined) taskPatch.title = patch.title;
+      if (patch.summary !== undefined) taskPatch.description = patch.summary;
+      if (patch.status !== undefined) taskPatch.completed = patch.status === "done";
+      if (patch.importance !== undefined) taskPatch.importance = patch.importance;
+      if (patch.dueDate !== undefined) taskPatch.dueDate = patch.dueDate;
+      if (patch.columnId !== undefined) taskPatch.columnId = patch.columnId;
+      if (patch.start !== undefined) taskPatch.start = patch.start;
+      if (patch.end !== undefined) taskPatch.end = patch.end;
+      if (patch.allDay !== undefined) taskPatch.allDay = patch.allDay;
+      if (patch.body !== undefined) taskPatch.body = patch.body;
+      if (patch.canvasPos !== undefined) taskPatch.canvasPos = patch.canvasPos;
+      updateTask(id, taskPatch);
+      return true;
+    }
+
+    if (docsRef.current.some((d) => d.id === id)) {
+      const docPatch: Partial<MilindDocFile> = { updatedAt: Date.now() };
+      if (patch.title !== undefined) docPatch.title = patch.title;
+      if (patch.body !== undefined) docPatch.content = patch.body;
+      if (patch.status !== undefined) docPatch.completed = patch.status === "done";
+      if (patch.importance !== undefined) docPatch.importance = patch.importance;
+      if (patch.dueDate !== undefined) docPatch.dueDate = patch.dueDate;
+      if (patch.columnId !== undefined) docPatch.columnId = patch.columnId;
+      if (patch.graphPos !== undefined) docPatch.graphPos = patch.graphPos;
+      if (patch.nodeColor !== undefined) docPatch.nodeColor = patch.nodeColor;
+      // A doc that gains a time carries it in calendarMeta, which is also what
+      // the Google projection reads.
+      if (patch.start !== undefined || patch.end !== undefined) {
+        const existing = docsRef.current.find((d) => d.id === id);
+        const start = patch.start ?? existing?.calendarMeta?.start;
+        const end = patch.end ?? existing?.calendarMeta?.end;
+        if (start && end) {
+          docPatch.calendarMeta = {
+            ...(existing?.calendarMeta ?? {
+              eventId: "",
+              calendarId: "",
+              title: existing?.title ?? "Untitled",
+              allDay: false,
+            }),
+            title: patch.title ?? existing?.title ?? "Untitled",
+            start,
+            end,
+            allDay: patch.allDay ?? existing?.calendarMeta?.allDay ?? false,
+          };
+        }
+      }
+      updateDoc(id, docPatch);
+      return true;
+    }
+
+    return false;
+  }, [updateTask, updateDoc]);
+
   // ── Context value ──────────────────────────────────────────────
 
   const actionsValue = useMemo<EntityActions>(
@@ -480,6 +668,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
       setLinks, link, unlink,
       resolveLabel, registerLabelResolver,
       pendingOpenDocId, openAsDoc, clearPendingOpenDoc,
+      updateRecord,
       driveAuthError,
     }),
     [
@@ -488,17 +677,20 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
       setLinks, link, unlink,
       resolveLabel, registerLabelResolver,
       pendingOpenDocId, openAsDoc, clearPendingOpenDoc,
+      updateRecord,
       driveAuthError,
     ],
   );
 
   return (
-    <TasksContext.Provider value={tasks}>
-      <DocsContext.Provider value={docs}>
+    <TasksContext.Provider value={tasksProjected}>
+      <DocsContext.Provider value={docsProjected}>
         <LinksContext.Provider value={links}>
-          <EntityActionsContext.Provider value={actionsValue}>
-            {children}
-          </EntityActionsContext.Provider>
+          <RecordsContext.Provider value={records}>
+            <EntityActionsContext.Provider value={actionsValue}>
+              {children}
+            </EntityActionsContext.Provider>
+          </RecordsContext.Provider>
         </LinksContext.Provider>
       </DocsContext.Provider>
     </TasksContext.Provider>
@@ -535,6 +727,14 @@ export function useDocs(): MilindDocFile[] {
 export function useLinks(): LinkGraph {
   const ctx = useContext(LinksContext);
   if (!ctx) throw new Error("useLinks must be used inside EntityStoreProvider");
+  return ctx;
+}
+
+/** Every record in the app, projected into the one model. Filter by facet —
+ *  `isScheduled`, `isActionable`, `hasBody` — rather than by source table. */
+export function useRecords(): MilindRecord[] {
+  const ctx = useContext(RecordsContext);
+  if (!ctx) throw new Error("useRecords must be used inside EntityStoreProvider");
   return ctx;
 }
 

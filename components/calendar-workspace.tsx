@@ -180,7 +180,7 @@ export function CalendarWorkspace(props: CalendarWorkspaceProps) {
 
 function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const tasks = useTasks();
-  const { addTask, addDoc, updateTask, link, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
+  const { addTask, addDoc, updateTask, updateRecord, link, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
   const calendarRef = useRef<FullCalendar | null>(null);
   const calendarFrameRef = useRef<HTMLDivElement | null>(null);
   const syncVersionRef = useRef(0);
@@ -610,7 +610,12 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         return;
       }
 
-      /* ── event → task ───────────────────────── */
+      /* ── event → task ─────────────────────────
+       * The one direction that must still create. A Google event is a
+       * projection owned by Google, not a milindCal record, so pulling it onto
+       * the board materialises the record for the first time and links it back
+       * to its Google origin. Once records own their Google projection
+       * outright (see lib/record.ts), this collapses too. */
       if (source.kind === "event" && target.targetKind === "task") {
         const ev = source.calendarId
           ? eventsRef.current.find((e) => e.id === source.id && e.calendarId === source.calendarId)
@@ -630,19 +635,17 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         return;
       }
 
-      /* ── doc → task ─────────────────────────── */
+      /* ── doc → task ───────────────────────────
+       * The doc gains a completion state and starts appearing on the board.
+       * Same record — no minted task, no link edge to keep in step. */
       if (source.kind === "doc" && target.targetKind === "task") {
-        const newTask: Task = {
-          id: Math.random().toString(36).slice(2, 10),
-          title: source.label || "Untitled",
-          description: source.description ?? "",
-          completed: false,
-          createdAt: Date.now(),
+        updateRecord(source.id, {
+          status: "open",
           importance: "medium",
-          columnId: typeof target.data?.columnId === "string" ? target.data.columnId as string : undefined,
-        };
-        addTask(newTask);
-        link(sourceKey, entityKey("task", newTask.id));
+          columnId: typeof target.data?.columnId === "string"
+            ? target.data.columnId as string
+            : undefined,
+        });
         return;
       }
 
@@ -659,23 +662,16 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         return;
       }
 
-      /* ── task → doc ─────────────────────────── */
+      /* ── task → doc ───────────────────────────
+       * The task gains body content and starts opening in the editor,
+       * seeded from its description. Same record. */
       if (source.kind === "task" && target.targetKind === "doc") {
-        const newDoc: MilindDocFile = {
-          id: Math.random().toString(36).slice(2, 10),
-          title: source.label || "Untitled",
-          content: source.description
-            ? {
-                type: "doc",
-                content: [{ type: "paragraph", content: [{ type: "text", text: source.description }] }],
-              }
-            : null,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          links: [],
-        };
-        addDoc(newDoc);
-        link(sourceKey, entityKey("doc", newDoc.id));
+        const text = source.description?.trim();
+        updateRecord(source.id, {
+          body: text
+            ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] }
+            : { type: "doc", content: [] },
+        });
         openDocs();
         return;
       }
@@ -684,7 +680,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     // callbacks (addDoc, addTask, link, handleConvertToDoc). This keeps
     // handleUniversalDrop referentially stable across polling re-renders so
     // DndContext's onDragEnd handler doesn't churn mid-drag.
-    [addDoc, addTask, updateTask, handleConvertToDoc, link, openDocs],
+    [addDoc, addTask, updateTask, updateRecord, handleConvertToDoc, link, openDocs],
   );
 
   /** Set by handleUniversalDrop when a task/doc is dropped onto the calendar

@@ -129,6 +129,14 @@ export interface MilindDocFile {
   graphLinks?: string[];
   /** True when this doc was auto-created from a calendar event description */
   autoCreatedFromCalendar?: boolean;
+
+  /* ── Task facet ──────────────────────────────────────────────────
+   * A doc with a completion state also appears on the task board. Same
+   * record, second view — no linked copy. */
+  completed?: boolean;
+  importance?: TaskImportance;
+  dueDate?: string;
+  columnId?: string;
 }
 
 export interface PanelNote {
@@ -175,6 +183,12 @@ export interface Task {
   start?: string;
   end?: string;
   allDay?: boolean;
+
+  /* ── Doc facet ───────────────────────────────────────────────────
+   * Rich body content. Present means this same record also opens in the
+   * milindDocs editor — it is not converted into a doc and gets no linked
+   * copy. Tiptap JSON, same shape as MilindDocFile.content. */
+  body?: Record<string, unknown> | null;
 }
 
 export interface KanbanColumn {
