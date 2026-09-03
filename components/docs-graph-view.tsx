@@ -224,7 +224,15 @@ export function DocsGraphView({
       const stillMoving = tickPhysics();
       frameCount++;
 
-      // React re-render every 3 frames so node DIVs follow physics
+      /* React re-render every 3 frames so node DIVs follow physics.
+       *
+       * Worth knowing when debugging: the nodes are rendered from
+       * `nodesRef.current`, a ref React does not track, so this tick is the
+       * only thing that puts them on screen. In a hidden tab
+       * (document.visibilityState === "hidden") rAF never fires, this loop
+       * never runs, and the graph paints its edges with no nodes at all —
+       * which looks exactly like a rendering bug and isn't one. Check
+       * document.hidden before chasing it. */
       if (frameCount % 3 === 0) {
         setRenderTick((t) => t + 1);
       }
