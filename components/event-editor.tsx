@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { addHours } from "date-fns";
-import { type CSSProperties, memo, useEffect, useMemo, useState } from "react";
+import { memo, type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, FileText, X } from "lucide-react";
 import { allDayEndToExclusive, allDayEndToInclusive, toDateOnly, toDateTimeLocal, toUtcRruleDate } from "@/lib/datetime";
 import { BacklinksList } from "@/components/backlinks-list";
@@ -129,6 +129,39 @@ export const EventEditor = memo(function EventEditor({
   useEffect(() => {
     setHexInputValue(eventColorHex);
   }, [eventColorHex]);
+
+  /* Escape closes, and focus goes back where it came from.
+   *
+   * Neither happened before. A keyboard user could open the editor, land in
+   * the title field, and have no way out except tabbing to Cancel — and on
+   * close, focus fell to the document body, so the next Tab started from the
+   * top of the page instead of the control they had just used.
+   *
+   * `capture` so the key is handled before an inner control (the colour
+   * popover, a select) can swallow it. */
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    restoreFocusRef.current = document.activeElement as HTMLElement | null;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      // Only pull focus back if it is still inside the editor; if the user
+      // has clicked elsewhere in the meantime, leave it where they put it.
+      const returnTo = restoreFocusRef.current;
+      if (returnTo && document.body.contains(returnTo)) {
+        const active = document.activeElement;
+        if (!active || active === document.body) returnTo.focus();
+      }
+    };
+  }, [open, onClose]);
 
   useEffect(() => {
     if (!open) return;

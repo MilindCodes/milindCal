@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface NewCalendarDialogProps {
   open: boolean;
@@ -16,6 +16,30 @@ export function NewCalendarDialog({ open, onClose, onCreate }: NewCalendarDialog
   const [description, setDescription] = useState("");
   const [backgroundColor, setBackgroundColor] = useState(COLOR_OPTIONS[0]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  /* Same contract as the event editor: Escape closes, and focus returns to
+   * whatever opened the dialog rather than falling to the document body. */
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    restoreFocusRef.current = document.activeElement as HTMLElement | null;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      const returnTo = restoreFocusRef.current;
+      if (returnTo && document.body.contains(returnTo)) {
+        const active = document.activeElement;
+        if (!active || active === document.body) returnTo.focus();
+      }
+    };
+  }, [open, onClose]);
 
   const handleSubmit = async () => {
     if (!summary.trim()) return;
