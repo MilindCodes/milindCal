@@ -57,6 +57,66 @@ import {
  */
 const MIGRATION_FLAG = "milindcal.migrated_to_drive.v1";
 
+/**
+ * Local rescue for sheet data.
+ *
+ * milindDrive's task and doc routes do not accept a `sheet` field yet, so a
+ * spreadsheet written while signed in is dropped on save and gone by the next
+ * reload. Every other facet has somewhere else to live — a doc's schedule
+ * rides in `calendarMeta`, a doc's body in `content` — but a sheet has
+ * nothing, which makes it the one facet whose loss is total.
+ *
+ * So sheets are mirrored here, keyed by record id. The server stays
+ * authoritative: this is consulted *only* where the server returned no sheet
+ * for a record it does know about. The moment milindDrive gains the column
+ * (docs/milinddrive-facet-persistence.patch.md) the server value wins on every
+ * read, this stops being consulted, and it can be deleted.
+ *
+ * Being honest about the limit: this is per-device. It stops you losing a
+ * spreadsheet on reload; it does not make one follow you to another machine.
+ * It is a floor under the data loss, not a substitute for the backend fix.
+ */
+const SHEET_RESCUE_KEY = "milindcal.sheets.rescue.v1";
+
+type SheetRescue = Record<string, unknown>;
+
+function readSheetRescue(): SheetRescue {
+  return readJSON<SheetRescue>(SHEET_RESCUE_KEY, {});
+}
+
+/** Mirror one record's sheet locally. Passing undefined forgets it, so a
+ *  record whose sheet is cleared does not resurrect on the next load. */
+function writeSheetRescue(id: string, sheet: unknown): void {
+  const rescue = readSheetRescue();
+  if (sheet === undefined || sheet === null) {
+    if (rescue[id] === undefined) return;
+    delete rescue[id];
+  } else {
+    rescue[id] = sheet;
+  }
+  writeBatched(SHEET_RESCUE_KEY, rescue);
+}
+
+/** Re-attach locally-held sheets to records the server returned without one. */
+function restoreSheets<T extends { id: string; sheet?: unknown }>(records: T[]): T[] {
+  const rescue = readSheetRescue();
+  if (Object.keys(rescue).length === 0) return records;
+  let restored = 0;
+  const out = records.map((r) => {
+    if (r.sheet !== undefined || rescue[r.id] === undefined) return r;
+    restored++;
+    return { ...r, sheet: rescue[r.id] };
+  });
+  if (restored > 0) {
+    console.warn(
+      `[milindCal] Restored ${restored} spreadsheet(s) from local storage — ` +
+        "the server is not persisting sheet data yet, so these exist only on " +
+        "this device. See docs/milinddrive-facet-persistence.patch.md.",
+    );
+  }
+  return out;
+}
+
 interface EntityActions {
   setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
   addTask: (task: Task) => void;
@@ -218,8 +278,9 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         fetchLinks(t),
       ]);
 
-      setTasks(remoteTasks);
-      setDocs(remoteDocs);
+      // Re-attach any sheets the server dropped. No-op once it persists them.
+      setTasks(restoreSheets(remoteTasks));
+      setDocs(restoreSheets(remoteDocs));
       setLinks(remoteLinks);
       setHydrated(true);
     }
@@ -269,6 +330,8 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
 
   const addTask = useCallback((task: Task) => {
     setTasks((prev) => [task, ...prev]);
+    // A record created *as* a sheet never passes through updateRecord.
+    if (task.sheet !== undefined) writeSheetRescue(task.id, task.sheet);
     const token = tokenRef.current;
     if (token && task.source !== "asana") {
       driveCreateTask(token, task).catch(console.error);
@@ -286,7 +349,10 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         if (patch.dueDate !== undefined) docPatch.dueDate = patch.dueDate;
         if (patch.columnId !== undefined) docPatch.columnId = patch.columnId;
         if (patch.body !== undefined) docPatch.content = patch.body;
-        if (patch.sheet !== undefined) docPatch.sheet = patch.sheet;
+        if (patch.sheet !== undefined) {
+        docPatch.sheet = patch.sheet;
+        writeSheetRescue(id, patch.sheet);
+      }
         updateDocRef.current(id, docPatch);
       }
       return;
@@ -304,6 +370,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const deleteTask = useCallback((id: string) => {
+    writeSheetRescue(id, undefined);
     if (!tasksRef.current.some((t) => t.id === id)) {
       if (docsRef.current.some((d) => d.id === id)) deleteDocRef.current(id);
       return;
@@ -376,6 +443,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
   }, [updateTask]);
 
   const deleteDoc = useCallback((id: string) => {
+    writeSheetRescue(id, undefined);
     if (!docsRef.current.some((d) => d.id === id)) {
       if (tasksRef.current.some((t) => t.id === id)) deleteTask(id);
       return;
@@ -624,7 +692,11 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
       if (patch.allDay !== undefined) taskPatch.allDay = patch.allDay;
       if (patch.body !== undefined) taskPatch.body = patch.body;
       if (patch.canvasPos !== undefined) taskPatch.canvasPos = patch.canvasPos;
-      if (patch.sheet !== undefined) taskPatch.sheet = patch.sheet;
+      if (patch.sheet !== undefined) {
+        taskPatch.sheet = patch.sheet;
+        // Server drops this today; keep a local copy so it survives reload.
+        writeSheetRescue(id, patch.sheet);
+      }
       updateTask(id, taskPatch);
       return true;
     }
