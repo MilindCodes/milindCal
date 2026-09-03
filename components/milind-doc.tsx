@@ -2,6 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useEditor, EditorContent, type Editor, ReactRenderer } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
@@ -1092,6 +1093,86 @@ export function MilindDoc({
         <BacklinksList entityKey={entityKey("doc", doc.id)} />
 
         {/* Formatting toolbar */}
+        {/* Selection bubble.
+          *
+          * Character formatting belongs where the text is, not in a strip at
+          * the top of the window: with a toolbar you select, travel to the
+          * edge, click, and travel back. The bubble puts bold/italic/etc.
+          * under the cursor at the moment they're relevant, and — because it
+          * only exists while a range is selected — it costs nothing the rest
+          * of the time. These controls stay in the toolbar too, so nothing is
+          * only reachable by hover. */}
+        <BubbleMenu
+          editor={editor}
+          options={{ placement: "top", offset: 8 }}
+          shouldShow={({ editor: ed, from, to }) =>
+            // Only for a real range, and never inside a code block, where
+            // inline marks don't apply.
+            from !== to && !ed.isActive("codeBlock")
+          }
+        >
+          <div className="gd-bubble">
+            <button
+              className={`gd-bubble-btn${editor.isActive("bold") ? " active" : ""}`}
+              onClick={() => editor.chain().focus().toggleBold().run()}
+              title="Bold (Ctrl+B)"
+              type="button"
+            >
+              <Bold size={14} />
+            </button>
+            <button
+              className={`gd-bubble-btn${editor.isActive("italic") ? " active" : ""}`}
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+              title="Italic (Ctrl+I)"
+              type="button"
+            >
+              <Italic size={14} />
+            </button>
+            <button
+              className={`gd-bubble-btn${editor.isActive("underline") ? " active" : ""}`}
+              onClick={() => editor.chain().focus().toggleUnderline().run()}
+              title="Underline (Ctrl+U)"
+              type="button"
+            >
+              <UnderlineIcon size={14} />
+            </button>
+            <button
+              className={`gd-bubble-btn${editor.isActive("strike") ? " active" : ""}`}
+              onClick={() => editor.chain().focus().toggleStrike().run()}
+              title="Strikethrough"
+              type="button"
+            >
+              <Strikethrough size={14} />
+            </button>
+            <span className="gd-bubble-sep" />
+            <button
+              className={`gd-bubble-btn${editor.isActive("code") ? " active" : ""}`}
+              onClick={() => editor.chain().focus().toggleCode().run()}
+              title="Inline code"
+              type="button"
+            >
+              <Code size={14} />
+            </button>
+            <button
+              className={`gd-bubble-btn${editor.isActive("link") ? " active" : ""}`}
+              onClick={() => {
+                const prev = editor.getAttributes("link").href as string | undefined;
+                const href = window.prompt("Link URL", prev ?? "https://");
+                if (href === null) return;
+                if (href === "") {
+                  editor.chain().focus().extendMarkRange("link").unsetLink().run();
+                  return;
+                }
+                editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
+              }}
+              title="Link"
+              type="button"
+            >
+              <LinkIcon size={14} />
+            </button>
+          </div>
+        </BubbleMenu>
+
         <div className="gd-toolbar">
           <StyleDropdown editor={editor} />
           <div className="gd-toolbar-sep" />

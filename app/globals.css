@@ -8518,3 +8518,66 @@ a.primary-button {
   min-height: 0;
   margin-top: 8px;
 }
+
+/* ══ milindDocs selection bubble ══════════════════════════════════════
+ *
+ * Character formatting under the cursor rather than at the window edge. Dark
+ * on light paper so it reads as an overlay rather than another panel — the
+ * one place in milindCal that inverts, precisely because it should feel like
+ * it is floating above the page rather than part of it.
+ */
+
+.gd-bubble {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--ink);
+  box-shadow: 0 6px 20px rgba(42, 20, 24, 0.28), 0 1px 3px rgba(42, 20, 24, 0.2);
+  /* Above the editor chrome, below modals. */
+  z-index: 40;
+}
+
+.gd-bubble-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(253, 250, 246, 0.82);
+  cursor: pointer;
+  transition: background 110ms ease, color 110ms ease;
+}
+
+.gd-bubble-btn:hover {
+  background: rgba(253, 250, 246, 0.14);
+  color: var(--salt);
+}
+
+.gd-bubble-btn.active {
+  background: var(--cherry);
+  color: #fff;
+}
+
+.gd-bubble-btn:focus-visible {
+  outline: 2px solid var(--salt);
+  outline-offset: -2px;
+}
+
+.gd-bubble-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: rgba(253, 250, 246, 0.2);
+}
+
+/* The bubble is an overlay, so motion here is distracting rather than
+ * expressive — it appears where the selection is and should simply be there. */
+@media (prefers-reduced-motion: reduce) {
+  .gd-bubble-btn { transition: none; }
+}
