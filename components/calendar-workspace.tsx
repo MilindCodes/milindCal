@@ -1,8 +1,8 @@
 "use client";
 
 import FullCalendar from "@fullcalendar/react";
-import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
+import dayGridPlugin from "@fullcalendar/daygrid";
 import multiMonthPlugin from "@fullcalendar/multimonth";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import type { DateSelectArg, DatesSetArg, EventChangeArg, EventClickArg, EventContentArg, EventInput, MoreLinkArg } from "@fullcalendar/core";
@@ -202,6 +202,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const tasks = useTasks();
   const records = useRecords();
   const { addTask, addDoc, updateTask, updateRecord, link, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
+  /* Note: FullCalendar's plugins were briefly loaded on demand to keep the
+   * Month and Year plugins out of the initial bundle. It does not work — the
+   * React wrapper registers plugins at construction, so a plugin added to the
+   * prop afterwards is never picked up and changeView() silently no-ops onto
+   * a view FullCalendar does not know about. The saving measured at ~1kB
+   * anyway, because the plugins share most of their weight with core, which
+   * loads regardless. Keep them static. */
   const calendarRef = useRef<FullCalendar | null>(null);
   const calendarFrameRef = useRef<HTMLDivElement | null>(null);
   const syncVersionRef = useRef(0);
@@ -669,27 +676,44 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       }
 
       /* ── event → task ─────────────────────────
-       * The one direction that must still create. A Google event is a
-       * projection owned by Google, not a milindCal record, so pulling it onto
-       * the board materialises the record for the first time and links it back
-       * to its Google origin. Once records own their Google projection
-       * outright (see lib/record.ts), this collapses too. */
+       * Adoption, not duplication. A Google event has no milindCal record
+       * until it needs one; dropping it on the board creates that record and
+       * marks it as *being* that event via googleEventId. The calendar then
+       * suppresses Google's own copy and renders the record instead, so there
+       * is one tile and one title, not two that drift apart.
+       *
+       * Re-dropping an already-adopted event just updates it. */
       if (source.kind === "event" && target.targetKind === "task") {
         const ev = source.calendarId
           ? eventsRef.current.find((e) => e.id === source.id && e.calendarId === source.calendarId)
           : undefined;
-        const newTask: Task = {
+        const columnId = typeof target.data?.columnId === "string"
+          ? target.data.columnId as string
+          : undefined;
+
+        const existing = tasksRef.current.find(
+          (t) => t.googleEventId === source.id && t.googleCalendarId === source.calendarId,
+        );
+        if (existing) {
+          updateTask(existing.id, { columnId, completed: false });
+          return;
+        }
+
+        addTask({
           id: Math.random().toString(36).slice(2, 10),
           title: source.label || ev?.title || "Untitled",
           description: source.description ?? ev?.description ?? "",
           completed: false,
           createdAt: Date.now(),
           importance: "medium",
-          columnId: typeof target.data?.columnId === "string" ? target.data.columnId as string : undefined,
-          dueDate: ev?.start ? ev.start.slice(0, 10) : undefined,
-        };
-        addTask(newTask);
-        link(sourceKey, entityKey("task", newTask.id));
+          columnId,
+          // It keeps its place on the calendar because it keeps its time.
+          start: ev?.start,
+          end: ev?.end,
+          allDay: ev?.allDay,
+          googleEventId: source.id,
+          googleCalendarId: source.calendarId,
+        });
         return;
       }
 
@@ -717,6 +741,16 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         // handleConvertToDoc already sets pendingCalendarDoc; the resulting
         // doc will have calendarMeta pointing back at this event, giving us
         // a two-way association without an extra link edge.
+        return;
+      }
+
+      /* ── anything → sheet ─────────────────────
+       * The record gains grid data and starts opening in the sheet view.
+       * Same record — the sheet is a face, not a container. */
+      if (target.targetKind === "sheet") {
+        if (source.kind === "event") return; // Google events adopt via the board first.
+        updateRecord(source.id, { sheet: { ...DEFAULT_SHEET, cells: {} } });
+        setView("sheet");
         return;
       }
 
@@ -1050,7 +1084,17 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     // saturated block is loud and forces white-on-colour text that fails at
     // small sizes. The tile renders its own tinted surface with a saturated
     // rail and dark ink instead, and carries the accent through extendedProps.
-    const out: EventInput[] = events.map((event) => ({
+    // Events milindCal has adopted are rendered from their record below;
+    // drawing Google's copy too would put two tiles in the same slot.
+    const adopted = new Set(
+      tasks
+        .filter((t) => t.googleEventId)
+        .map((t) => `${t.googleCalendarId}::${t.googleEventId}`),
+    );
+
+    const out: EventInput[] = events
+      .filter((event) => !adopted.has(`${event.calendarId}::${event.id}`))
+      .map((event) => ({
       id: `${event.calendarId}::${event.id}`,
       title: event.title,
       start: event.start,
@@ -1066,7 +1110,12 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       if (!task.start) continue;
       const color = task.completed
         ? "#9ca3af"
-        : IMPORTANCE_EVENT_COLORS[task.importance] ?? IMPORTANCE_EVENT_COLORS.medium;
+        : task.googleEventId
+          // Adopted from Google: keep the calendar's own colour so the tile
+          // still reads as the meeting it is, not as a generic task.
+          ? events.find((e) => e.id === task.googleEventId)?.color
+            ?? IMPORTANCE_EVENT_COLORS.medium
+          : IMPORTANCE_EVENT_COLORS[task.importance] ?? IMPORTANCE_EVENT_COLORS.medium;
       out.push({
         id: `task:${task.id}`,
         title: task.title,
@@ -1422,11 +1471,41 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     // there is no separate event to keep in step.
     if (change.event.id.startsWith("task:")) {
       const taskId = change.event.id.slice("task:".length);
+      const task = tasksRef.current.find((t) => t.id === taskId);
       updateTask(taskId, {
         start: change.event.startStr,
         end: change.event.endStr || undefined,
         allDay: change.event.allDay,
       });
+
+      // A record that has been adopted from Google still exists there, so the
+      // new window has to reach Google too — otherwise the next sync would
+      // pull the old time back and silently undo the drag.
+      if (task?.googleEventId && task.googleCalendarId) {
+        void fetch(`/api/google/events/${encodeURIComponent(task.googleEventId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            calendarId: task.googleCalendarId,
+            event: {
+              title: task.title,
+              description: task.description ?? "",
+              location: "",
+              start: change.event.startStr,
+              end: change.event.endStr || change.event.startStr,
+              allDay: change.event.allDay,
+              attendees: [],
+              recurrence: [],
+              reminders: { useDefault: true, overrides: [] },
+              eventType: "meeting",
+              colorId: "9",
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            },
+          }),
+        }).catch(() => {
+          setError("Moved locally, but syncing to Google failed");
+        });
+      }
       return;
     }
 

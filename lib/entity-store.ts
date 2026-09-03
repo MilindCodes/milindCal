@@ -10,7 +10,7 @@
 
 import type { CalendarEvent, MilindDocFile, Task } from "./models";
 
-export type EntityKind = "event" | "task" | "doc";
+export type EntityKind = "event" | "task" | "doc" | "sheet";
 
 /** `"event:abc123"` — stable, URL-safe identifier across entity kinds. */
 export type EntityKey = `${EntityKind}:${string}`;
@@ -24,7 +24,7 @@ export function parseEntityKey(key: string): { kind: EntityKind; id: string } | 
   if (idx === -1) return null;
   const kind = key.slice(0, idx) as EntityKind;
   const id = key.slice(idx + 1);
-  if (kind !== "event" && kind !== "task" && kind !== "doc") return null;
+  if (kind !== "event" && kind !== "task" && kind !== "doc" && kind !== "sheet") return null;
   if (!id) return null;
   return { kind, id };
 }

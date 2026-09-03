@@ -199,6 +199,14 @@ export interface Task {
    * Present means this same record also opens in the grid. Cells are
    * sparse A1-keyed raw strings; see lib/sheet.ts. */
   sheet?: SheetData;
+
+  /* ── Google projection ───────────────────────────────────────────
+   * When set, this record IS the Google event with that id — milindCal's
+   * identity for it, not a copy beside it. The calendar renders the record
+   * and suppresses Google's own copy, so adopting an event onto the board
+   * never produces two tiles. */
+  googleEventId?: string;
+  googleCalendarId?: string;
 }
 
 export interface KanbanColumn {

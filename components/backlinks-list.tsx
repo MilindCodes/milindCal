@@ -10,7 +10,7 @@
  */
 
 import { useMemo } from "react";
-import { Calendar, CheckSquare, FileText, X } from "lucide-react";
+import { Calendar, CheckSquare, FileText, Table, X } from "lucide-react";
 import { useEntityActions, useLinks } from "@/components/entity-store-context";
 import { neighbors, parseEntityKey, type EntityKey, type EntityKind } from "@/lib/entity-store";
 
@@ -27,6 +27,7 @@ const KIND_ICON: Record<EntityKind, typeof FileText> = {
   event: Calendar,
   task: CheckSquare,
   doc: FileText,
+  sheet: Table,
 };
 
 export function BacklinksList({
