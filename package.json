@@ -9,7 +9,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
-    "test:sheet": "npx --yes tsx scripts/sheet-formula-test.mjs"
+    "test:sheet": "npx --yes tsx scripts/sheet-formula-test.mjs",
+    "test:record": "npx --yes tsx scripts/record-model-test.mjs",
+    "test": "npm run test:sheet && npm run test:record"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
