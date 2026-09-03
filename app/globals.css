@@ -7965,3 +7965,54 @@ a.primary-button {
 #main-content:focus-visible {
   outline: none;
 }
+
+/* ── milindDocs panel: narrow screens ──────────────────────────────────
+ *
+ * The docs overlay had no rules below 760px at all. It's a horizontal flex
+ * with a fixed 280px sidebar plus an editor column and an optional graph
+ * panel, so at 375px it overflowed its own container and the editor was
+ * squeezed to ~80px wide. Stack the three panes instead. */
+@media (max-width: 760px) {
+  .docs-body,
+  .docs-body--obsidian {
+    flex-direction: column;
+  }
+
+  /* The wrapper carries an inline `width: 300` from the component, so it
+   * needs !important to yield here; .docs-sidebar's own 240-340px clamp
+   * has to be lifted too or it re-caps the width. */
+  .docs-sidebar-wrapper {
+    width: 100% !important;
+  }
+
+  .docs-sidebar {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    flex: 0 0 auto;
+    max-height: 38vh;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .docs-editor-col {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+  }
+
+  /* The graph panel's width is set inline by its drag-to-resize handle,
+   * which is meaningless at phone width — override it to full width and
+   * drop the handle, so the graph stacks like the other panes. */
+  .docs-graph-panel {
+    width: 100% !important;
+    flex: 0 0 auto;
+    height: 45vh;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+
+  .docs-graph-resize-handle {
+    display: none;
+  }
+}
