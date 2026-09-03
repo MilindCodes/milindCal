@@ -4517,7 +4517,20 @@ textarea {
   .workspace {
     padding: 8px;
     gap: 8px;
-    grid-template-rows: 1fr 240px;
+    /* .workspace is display:flex, so the previous `grid-template-rows:
+     * 1fr 240px` here was inert — a leftover from when this was a grid.
+     * Size the two panes with flex instead. */
+    flex-direction: column;
+  }
+
+  .calendar-shell {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .tasks-sidebar {
+    flex: 0 0 auto;
+    max-height: 45vh;
   }
 
   .calendar-shell,
@@ -4530,13 +4543,49 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  /* Both of these are flex-wrap:nowrap at desktop width, which meant the
+   * mobile `width:100%` / `flex:1` rules below could never take effect —
+   * the toolbar just overflowed its container by ~220px and clipped, with
+   * the title and sync pill overlapping the buttons. */
+  .app-header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
   .header-actions {
     width: 100%;
+    flex-wrap: wrap;
   }
 
   .header-actions button {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     justify-content: center;
+  }
+
+  .cal-nav {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  /* .header-identity is already min-width:0, but its *children* aren't, so
+   * the calendar title still pushed the row ~75px past the viewport and
+   * clipped. Let the title itself shrink and ellipsize instead. */
+  .header-identity {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .header-identity > * {
+    min-width: 0;
+  }
+
+  .header-title,
+  .header-identity h1,
+  .header-identity p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .brand-wordmark {

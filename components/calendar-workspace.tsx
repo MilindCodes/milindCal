@@ -74,8 +74,20 @@ const shellVariants = {
     transition: {
       duration: 0.52,
       ease: [0.2, 0.8, 0.2, 1],
-      when: "beforeChildren",
-      staggerChildren: 0.06
+      /* No `when: "beforeChildren"` here on purpose.
+       *
+       * It gates the children on the parent's animation *completing*, and
+       * this shell's transform is also driven by long-lived motion values
+       * (the docs "dive" spring and the elastic stretch). Those keep the
+       * shell's animation active, the completion callback never fires, and
+       * every itemVariants child — the toolbar, the control strip, the
+       * calendar frame — stays parked at opacity 0. The app loaded with an
+       * invisible header and calendar until some unrelated state change
+       * forced a re-render.
+       *
+       * Staggering alone gives the same cascade without the dependency. */
+      staggerChildren: 0.06,
+      delayChildren: 0.08
     }
   }
 } as const;

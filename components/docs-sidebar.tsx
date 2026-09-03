@@ -462,12 +462,15 @@ export function DocsSidebar({
               <div className="gd-sidebar-header-actions">
                 <div className="gd-sort-wrapper" ref={sortMenuRef}>
                   <button
+                    aria-expanded={showSortMenu}
+                    aria-haspopup="menu"
+                    aria-label={`Sort documents. Current: ${sortLabels[sortBy]}`}
                     className={`gd-icon-btn${showSortMenu ? " active" : ""}`}
                     onClick={() => setShowSortMenu((v) => !v)}
                     title={`Sort: ${sortLabels[sortBy]}`}
                     type="button"
                   >
-                    <ChevronDown size={12} />
+                    <ChevronDown aria-hidden="true" size={12} />
                   </button>
                   <AnimatePresence>
                     {showSortMenu && (
@@ -495,12 +498,14 @@ export function DocsSidebar({
                   </AnimatePresence>
                 </div>
                 <button
+                  aria-label="Toggle graph view"
+                  aria-pressed={graphOpen}
                   className={`gd-icon-btn${graphOpen ? " active" : ""}`}
                   onClick={onToggleGraph}
                   title="Graph view"
                   type="button"
                 >
-                  <Network size={12} />
+                  <Network aria-hidden="true" size={12} />
                 </button>
               </div>
             </div>
