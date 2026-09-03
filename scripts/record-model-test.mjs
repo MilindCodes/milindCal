@@ -81,6 +81,43 @@ t('record ⇒ task round-trips the title', taskFromRecord(asRecord).title, 'Ship
 t('record ⇒ task round-trips completion', taskFromRecord(recordFromTask({ ...task, completed: true })).completed, true);
 t('record ⇒ task round-trips importance', taskFromRecord(asRecord).importance, 'high');
 
+/* Every facet a Task can carry must survive the projection. This block exists
+ * because it didn't: `start` was added to Task and never mapped in
+ * recordFromTask, so once the calendar started reading the record space,
+ * every scheduled task silently vanished from the grid. Nothing caught it —
+ * the app built, typechecked, linted and passed 39 assertions with an empty
+ * calendar. Assert each facet crosses the boundary, in both directions. */
+const scheduledTask = {
+  id: 's1', title: 'Standup', completed: false, createdAt: 1, importance: 'medium',
+  start: '2026-01-02T09:00:00.000Z', end: '2026-01-02T09:30:00.000Z', allDay: false,
+};
+const schedRec = recordFromTask(scheduledTask);
+t('task ⇒ record carries start', schedRec.start, '2026-01-02T09:00:00.000Z');
+t('task ⇒ record carries end', schedRec.end, '2026-01-02T09:30:00.000Z');
+t('scheduled task IS on the calendar', isScheduled(schedRec), true);
+t('scheduled task is still actionable', isActionable(schedRec), true);
+t('record ⇒ task returns the window', [taskFromRecord(schedRec).start, taskFromRecord(schedRec).end],
+  ['2026-01-02T09:00:00.000Z', '2026-01-02T09:30:00.000Z']);
+
+// A task with a body is a doc too, and that has to cross the boundary.
+const bodyTask = { id: 'b1', title: 'Has body', completed: false, createdAt: 1, importance: 'low',
+  body: { type: 'doc', content: [] } };
+t('task ⇒ record carries a body', hasBody(recordFromTask(bodyTask)), true);
+t('record ⇒ task returns the body', taskFromRecord(recordFromTask(bodyTask)).body, { type: 'doc', content: [] });
+
+// An adopted Google event: the record IS the event, so the projection must
+// survive or the calendar would render Google's copy *and* the record.
+const adopted = { id: 'a1', title: 'Adopted', completed: false, createdAt: 1, importance: 'medium',
+  start: 'x', end: 'y', googleEventId: 'ev1', googleCalendarId: 'cal1' };
+t('task ⇒ record keeps the Google projection', recordFromTask(adopted).google, { calendarId: 'cal1', eventId: 'ev1' });
+t('record ⇒ task keeps googleEventId', taskFromRecord(recordFromTask(adopted)).googleEventId, 'ev1');
+
+// A record with no completion state has no task facet at all — that is what
+// keeps a sheet-only record off the board.
+const sheetOnly = { id: 'x1', title: 'Sheet only', createdAt: 1 };
+t('no completed ⇒ no task facet', isActionable(recordFromTask(sheetOnly)), false);
+t('no completed round-trips as undefined', taskFromRecord(recordFromTask(sheetOnly)).completed, undefined);
+
 const doc = { id: 'd1', title: 'Notes', content: { type: 'doc' }, createdAt: 2, updatedAt: 3, links: ['x'] };
 t('doc ⇒ record keeps the body', hasBody(recordFromDoc(doc)), true);
 t('doc ⇒ record keeps links', recordFromDoc(doc).links, ['x']);

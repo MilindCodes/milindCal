@@ -237,10 +237,21 @@ export function recordFromTask(t: Task): MilindRecord {
   return {
     id: t.id,
     title: t.title,
-    body: null,
+    body: t.body ?? null,
     summary: t.description,
-    status: t.completed ? "done" : "open",
+    // `completed` is the task-facet marker: absent means this record simply
+    // isn't actionable, which is different from being open.
+    status: t.completed === undefined ? undefined : t.completed ? "done" : "open",
     importance: t.importance,
+    // The calendar facet. Omitting these was a real bug: every view that
+    // reads the record space saw start: undefined, so scheduled tasks
+    // silently vanished from the grid.
+    start: t.start,
+    end: t.end,
+    allDay: t.allDay,
+    google: t.googleEventId && t.googleCalendarId
+      ? { calendarId: t.googleCalendarId, eventId: t.googleEventId }
+      : undefined,
     dueDate: t.dueDate,
     columnId: t.columnId,
     canvasPos: t.canvasPos,
@@ -261,7 +272,13 @@ export function taskFromRecord(r: MilindRecord): Task {
     id: r.id,
     title: r.title,
     description: r.summary,
-    completed: isDone(r),
+    completed: r.status === undefined ? undefined : isDone(r),
+    body: r.body ?? undefined,
+    start: r.start,
+    end: r.end,
+    allDay: r.allDay,
+    googleEventId: r.google?.eventId,
+    googleCalendarId: r.google?.calendarId,
     createdAt: r.createdAt,
     importance: r.importance ?? "medium",
     dueDate: r.dueDate,
