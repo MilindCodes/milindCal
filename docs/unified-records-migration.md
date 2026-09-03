@@ -41,13 +41,31 @@ and `docs.ts` accepts no `completed` / `importance` / `dueDate` / `columnId`
 either. Neither schema calls `.passthrough()`, and Zod strips unknown keys by
 default — so every one of these is dropped on write:
 
-| Field | Added to | Consequence when signed in |
-|---|---|---|
-| `start` / `end` / `allDay` | `Task` | Dragging a task onto the calendar does not survive reload |
-| `body` | `Task` | A task given doc content loses it |
-| `sheet` | `Task`, `MilindDocFile` | **Spreadsheets do not persist at all** |
-| `googleEventId` / `googleCalendarId` | `Task` | Adopting a Google event does not stick; the duplicate tile returns |
-| `completed` / `importance` / `dueDate` / `columnId` | `MilindDocFile` | A doc put on the board falls off it |
+Checked field by field against what the two Zod schemas actually accept, rather
+than assumed. Not all of it is broken.
+
+**Survives today**
+
+| Facet | Why |
+|---|---|
+| A doc gaining a schedule | The store writes it into `calendarMeta`, which `docs.ts` accepts |
+| A doc's body | `content` is accepted |
+| Task completion / importance / due date / column | Original columns |
+
+**Lost today**
+
+| Facet | Consequence when signed in |
+|---|---|
+| `start` / `end` / `allDay` on a task | Dragging a task onto the calendar does not survive reload |
+| `body` on a task | A task given doc content loses it |
+| `sheet` on either | **Spreadsheets do not persist at all** |
+| `googleEventId` / `googleCalendarId` | Adopting a Google event does not stick; the duplicate tile returns |
+| `completed` / `importance` / `dueDate` / `columnId` on a doc | A doc put on the board falls off it |
+
+So the urgent part is narrower than "the facets do not persist": it is task
+scheduling, spreadsheets, Google adoption, and putting a doc on the board.
+Sheets are the worst of those — unlike the rest, there is no second place that
+data lives.
 
 **Why I did not catch this earlier.** Every verification I ran used
 `DEV_AUTH_BYPASS=true`, which has no Google token, so `EntityStoreProvider`
