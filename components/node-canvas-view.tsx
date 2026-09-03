@@ -752,10 +752,26 @@ export function NodeCanvasView({
     });
   }, [weekEvents, canvasRect, wk]);
 
+  /* A task carrying a start *is* a calendar entry, so it follows the canvas
+   * week exactly as an event does. A task with no start isn't scheduled, has
+   * no week to belong to, and stays visible on every week. */
+  const inCurrentWeek = useCallback(
+    (t: Task) => {
+      if (!t.start) return true;
+      const s = new Date(t.start);
+      return s >= currentWeekStart && s <= currentWeekEnd;
+    },
+    [currentWeekStart, currentWeekEnd],
+  );
+
   /* Assign random positions to new free-floating tasks */
   useEffect(() => {
     if (!canvasRect) return;
-    const freeTasks = sidebarTasks.filter((t) => !t.attachedToEventKey && !t.completed);
+    // Same predicate as the render below — seeding positions for nodes that
+    // aren't shown this week would be wasted work and leak across weeks.
+    const freeTasks = sidebarTasks.filter(
+      (t) => !t.attachedToEventKey && !t.completed && inCurrentWeek(t),
+    );
     setTaskNodePositions((prev) => {
       const next = { ...prev };
       let changed = false;
@@ -773,7 +789,7 @@ export function NodeCanvasView({
       });
       return changed ? next : prev;
     });
-  }, [sidebarTasks, canvasRect]);
+  }, [sidebarTasks, canvasRect, inCurrentWeek]);
 
   /* One pass: write current live positions into the SVG connection lines. */
   const syncLines = useCallback(() => {
@@ -1182,10 +1198,17 @@ export function NodeCanvasView({
   const weekLabel = `${format(currentWeekStart, "MMM d")} – ${format(currentWeekEnd, "MMM d, yyyy")}`;
   const linkSourcePos = linkingFrom ? livePosRef.current[linkingFrom] : null;
 
-  /* Separate tasks: free-floating vs attached */
+  /* Separate tasks: free-floating vs attached.
+   *
+   * The canvas is scoped to a week, and events were filtered by it while
+   * tasks were not — so a task scheduled for Friday still appeared when you
+   * paged to next week, sitting alongside events that had correctly gone
+   * away. Under the record model a task carrying a start *is* a calendar
+   * entry, so it follows the week exactly as an event does. A task with no
+   * start isn't scheduled, has no week to belong to, and stays put. */
   const freeTasks = useMemo(
-    () => sidebarTasks.filter((t) => !t.attachedToEventKey && !t.completed),
-    [sidebarTasks]
+    () => sidebarTasks.filter((t) => !t.attachedToEventKey && !t.completed && inCurrentWeek(t)),
+    [sidebarTasks, inCurrentWeek]
   );
 
   const attachedTasksByEvent = useMemo(() => {
