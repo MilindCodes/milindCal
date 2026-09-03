@@ -59,6 +59,13 @@ function toDocFile(d: any): MilindDocFile {
     graphPos: d.graphPos ?? undefined,
     nodeColor: d.nodeColor ?? undefined,
     autoCreatedFromCalendar: d.autoCreatedFromCalendar ?? undefined,
+    // Task and sheet facets — a doc with a completion state belongs on the
+    // board, one with cells opens in the grid.
+    completed: d.completed ?? undefined,
+    importance: d.importance ?? undefined,
+    dueDate: d.dueDate ?? undefined,
+    columnId: d.columnId ?? undefined,
+    sheet: d.sheet ?? undefined,
   };
 }
 
@@ -80,7 +87,47 @@ function toTask(t: any): Task {
     asanaProjectName: t.asanaProjectName ?? undefined,
     asanaAssigneeName: t.asanaAssigneeName ?? undefined,
     source: t.source ?? "local",
+    // Facets. `undefined` when absent, never null, so `field !== undefined`
+    // stays the test for "does this record have this face?".
+    start: t.start ?? undefined,
+    end: t.end ?? undefined,
+    allDay: t.allDay ?? undefined,
+    body: t.body ?? undefined,
+    sheet: t.sheet ?? undefined,
+    googleEventId: t.googleEventId ?? undefined,
+    googleCalendarId: t.googleCalendarId ?? undefined,
   };
+}
+
+/* ── Facet round-trip check ────────────────────────────────────────
+ *
+ * The facet fields are new, and milindDrive's task/doc routes do not accept
+ * them yet (their Zod schemas have no .passthrough(), so unknown keys are
+ * dropped). Sending them is harmless — they are simply ignored — but the
+ * result is that a scheduled task, a sheet, or an adopted Google event is
+ * silently discarded on write and gone by the next reload.
+ *
+ * Silent data loss is the worst failure mode available, so say it out loud
+ * once per session rather than let someone lose work without knowing. When
+ * the backend gains the columns (see docs/milinddrive-facet-persistence.patch.md)
+ * this stops firing on its own and can be deleted.
+ */
+const FACET_FIELDS = ["start", "end", "allDay", "body", "sheet", "googleEventId", "completed", "importance"] as const;
+let facetLossReported = false;
+
+function warnIfFacetsDropped(sent: Record<string, unknown>, got: Record<string, unknown>) {
+  if (facetLossReported) return;
+  const lost = FACET_FIELDS.filter(
+    (f) => sent[f] !== undefined && sent[f] !== null && got[f] === undefined,
+  );
+  if (lost.length === 0) return;
+  facetLossReported = true;
+  console.error(
+    `[milindDrive] The server dropped ${lost.join(", ")} — these fields are not ` +
+      "persisted yet, so scheduling a task, creating a sheet, or adopting a " +
+      "calendar event will not survive a reload. See " +
+      "docs/milinddrive-facet-persistence.patch.md for the backend change.",
+  );
 }
 
 // ── Docs API ─────────────────────────────────────────────────────
@@ -117,11 +164,18 @@ export async function createDoc(
       graphPos: doc.graphPos ?? null,
       nodeColor: doc.nodeColor ?? null,
       autoCreatedFromCalendar: doc.autoCreatedFromCalendar ?? false,
+      completed: doc.completed ?? null,
+      importance: doc.importance ?? null,
+      dueDate: doc.dueDate ?? null,
+      columnId: doc.columnId ?? null,
+      sheet: doc.sheet ?? null,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
     }),
   });
-  return toDocFile(d);
+  const savedDoc = toDocFile(d);
+  warnIfFacetsDropped(doc as unknown as Record<string, unknown>, savedDoc as unknown as Record<string, unknown>);
+  return savedDoc;
 }
 
 export async function patchDoc(
@@ -147,12 +201,19 @@ export async function patchDoc(
   if ("nodeColor" in patch) body.nodeColor = patch.nodeColor ?? null;
   if ("autoCreatedFromCalendar" in patch)
     body.autoCreatedFromCalendar = patch.autoCreatedFromCalendar;
+  if ("completed" in patch) body.completed = patch.completed ?? null;
+  if ("importance" in patch) body.importance = patch.importance ?? null;
+  if ("dueDate" in patch) body.dueDate = patch.dueDate ?? null;
+  if ("columnId" in patch) body.columnId = patch.columnId ?? null;
+  if ("sheet" in patch) body.sheet = patch.sheet ?? null;
 
   const d = await driveRequest<unknown>(token, `/api/docs/${id}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
-  return toDocFile(d);
+  const savedDoc = toDocFile(d);
+  warnIfFacetsDropped(patch as unknown as Record<string, unknown>, savedDoc as unknown as Record<string, unknown>);
+  return savedDoc;
 }
 
 export async function deleteDoc(token: string, id: string): Promise<void> {
@@ -218,11 +279,22 @@ export async function createTask(
       asanaProjectName: task.asanaProjectName ?? null,
       asanaAssigneeName: task.asanaAssigneeName ?? null,
       source: task.source ?? "local",
+      // Facets. Harmless while the server ignores them, correct once it
+      // doesn't — and sending them is what makes the check below meaningful.
+      start: task.start ?? null,
+      end: task.end ?? null,
+      allDay: task.allDay ?? null,
+      body: task.body ?? null,
+      sheet: task.sheet ?? null,
+      googleEventId: task.googleEventId ?? null,
+      googleCalendarId: task.googleCalendarId ?? null,
       createdAt: task.createdAt,
       updatedAt: task.createdAt,
     }),
   });
-  return toTask(t);
+  const saved = toTask(t);
+  warnIfFacetsDropped(task as unknown as Record<string, unknown>, saved as unknown as Record<string, unknown>);
+  return saved;
 }
 
 export async function patchTask(
@@ -250,12 +322,21 @@ export async function patchTask(
   if ("asanaAssigneeName" in patch)
     body.asanaAssigneeName = patch.asanaAssigneeName ?? null;
   if ("source" in patch) body.source = patch.source;
+  if ("start" in patch) body.start = patch.start ?? null;
+  if ("end" in patch) body.end = patch.end ?? null;
+  if ("allDay" in patch) body.allDay = patch.allDay ?? null;
+  if ("body" in patch) body.body = patch.body ?? null;
+  if ("sheet" in patch) body.sheet = patch.sheet ?? null;
+  if ("googleEventId" in patch) body.googleEventId = patch.googleEventId ?? null;
+  if ("googleCalendarId" in patch) body.googleCalendarId = patch.googleCalendarId ?? null;
 
   const t = await driveRequest<unknown>(token, `/api/tasks/${id}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
-  return toTask(t);
+  const saved = toTask(t);
+  warnIfFacetsDropped(patch as unknown as Record<string, unknown>, saved as unknown as Record<string, unknown>);
+  return saved;
 }
 
 export async function deleteTask(token: string, id: string): Promise<void> {
