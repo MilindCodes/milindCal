@@ -8016,3 +8016,39 @@ a.primary-button {
     display: none;
   }
 }
+
+/* ── Scheduled tasks on the calendar grid ──────────────────────────────
+ *
+ * A task with a start time is the same record as the board row, so its tile
+ * carries the same affordance: a completion toggle rather than a drag handle. */
+.fc-event-tile-inner--task {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.fc-task-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.28);
+  color: inherit;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.fc-task-check:hover {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.fc-record-done .fc-event-tile-title {
+  text-decoration: line-through;
+  opacity: 0.72;
+}

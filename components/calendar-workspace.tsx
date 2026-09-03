@@ -7,7 +7,7 @@ import multiMonthPlugin from "@fullcalendar/multimonth";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import type { DateSelectArg, DatesSetArg, EventChangeArg, EventClickArg, EventContentArg, EventInput, MoreLinkArg } from "@fullcalendar/core";
 import { AnimatePresence, animate, motion, useMotionValue, useSpring, useTransform, LayoutGroup } from "framer-motion";
-import { AlertCircle, AlertTriangle, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, Circle, FileText, Layers, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, FileText, Layers, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 import { AuthActions } from "@/components/auth-actions";
@@ -140,6 +140,14 @@ function isRenderedEventChanged(a: CalendarEvent, b: CalendarEvent): boolean {
   );
 }
 
+/** Tile colours for scheduled tasks. Mirrors the task board's importance
+ *  colours so the same record reads as the same thing in both views. */
+const IMPORTANCE_EVENT_COLORS: Record<string, string> = {
+  low: "#6b7280",
+  medium: "#f59e0b",
+  high: "#ef4444",
+};
+
 const VIEW_LABELS: Record<CalendarView, string> = {
   timeGridDay: "Day",
   timeGridWeek: "Week",
@@ -172,7 +180,7 @@ export function CalendarWorkspace(props: CalendarWorkspaceProps) {
 
 function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const tasks = useTasks();
-  const { addTask, addDoc, link, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
+  const { addTask, addDoc, updateTask, link, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
   const calendarRef = useRef<FullCalendar | null>(null);
   const calendarFrameRef = useRef<HTMLDivElement | null>(null);
   const syncVersionRef = useRef(0);
@@ -546,6 +554,11 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const eventsRef = useRef(events);
   useEffect(() => { eventsRef.current = events; });
 
+  /* Same reasoning for tasks: tile renderers and drop handlers need the
+   * current list without being re-created on every task edit. */
+  const tasksRef = useRef<Task[]>(tasks);
+  useEffect(() => { tasksRef.current = tasks; });
+
   const handleUniversalDrop = useCallback(
     (evt: UniversalDropEvent) => {
       const { source, target } = evt;
@@ -556,25 +569,26 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       // Same-kind drops are reorder/move intents handled by the sidebar itself.
       if (source.kind === target.targetKind) return;
 
-      /* ── task → event ───────────────────────── */
+      /* ── task → calendar ─────────────────────
+       *
+       * This does NOT create an event. The task *becomes* scheduled: we write
+       * start/end onto the existing record and it starts rendering on the grid
+       * as well as the board — one record, two views.
+       *
+       * The old behaviour opened the event editor, created a second entity in
+       * Google, and joined the two with a link edge. From that moment the copies
+       * drifted: renaming the event left the task's title stale, completing the
+       * task left the event behind. */
       if (source.kind === "task" && target.targetKind === "event") {
-        taskDropTitleRef.current = source.label || "Untitled";
-        taskDropDescriptionRef.current = source.description ?? "";
-        // Reset in case a prior doc→event drop left it on "doc".
-        setEditorEntranceFrom("side");
-        setEditingEvent(null);
-        // Use a slot hint from target.data if provided, else default to now
         const slotStart = typeof target.data?.start === "string"
           ? target.data.start as string
           : new Date().toISOString();
         const slotEnd = typeof target.data?.end === "string"
           ? target.data.end as string
           : new Date(new Date(slotStart).getTime() + 60 * 60 * 1000).toISOString();
-        setDraftWindow({ start: slotStart, end: slotEnd });
-        setEventEditorOpen(true);
-        // Link is added once the event is actually created (eventEditor → createEvent).
-        // For now we stash the source key so the create handler can attach it.
-        pendingLinkSourceRef.current = sourceKey;
+        const allDay = target.data?.allDay === true;
+
+        updateTask(source.id, { start: slotStart, end: slotEnd, allDay });
         return;
       }
 
@@ -670,7 +684,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     // callbacks (addDoc, addTask, link, handleConvertToDoc). This keeps
     // handleUniversalDrop referentially stable across polling re-renders so
     // DndContext's onDragEnd handler doesn't churn mid-drag.
-    [addDoc, addTask, handleConvertToDoc, link, openDocs],
+    [addDoc, addTask, updateTask, handleConvertToDoc, link, openDocs],
   );
 
   /** Set by handleUniversalDrop when a task/doc is dropped onto the calendar
@@ -972,20 +986,43 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     };
   }, [liveSyncMode]);
 
-  const fullCalendarEvents = useMemo<EventInput[]>(
-    () =>
-      events.map((event) => ({
-        id: `${event.calendarId}::${event.id}`,
-        title: event.title,
-        start: event.start,
-        end: event.end,
-        allDay: event.allDay,
-        backgroundColor: event.color,
-        borderColor: event.color,
-        textColor: event.color ? getTextColorForBg(event.color) : "#f0f4ff"
-      })),
-    [events]
-  );
+  /* The calendar's source is every record that has a start time — Google
+   * events *and* scheduled tasks. A task with a start isn't converted into an
+   * event and doesn't get a linked copy; it is the same record, rendered here
+   * as well as on the board. Give a scheduled task the "task:" id prefix so
+   * click and drag handlers can route back to the record they came from. */
+  const fullCalendarEvents = useMemo<EventInput[]>(() => {
+    const out: EventInput[] = events.map((event) => ({
+      id: `${event.calendarId}::${event.id}`,
+      title: event.title,
+      start: event.start,
+      end: event.end,
+      allDay: event.allDay,
+      backgroundColor: event.color,
+      borderColor: event.color,
+      textColor: event.color ? getTextColorForBg(event.color) : "#f0f4ff"
+    }));
+
+    for (const task of tasks) {
+      if (!task.start) continue;
+      const color = task.completed
+        ? "#9ca3af"
+        : IMPORTANCE_EVENT_COLORS[task.importance] ?? IMPORTANCE_EVENT_COLORS.medium;
+      out.push({
+        id: `task:${task.id}`,
+        title: task.title,
+        start: task.start,
+        end: task.end,
+        allDay: task.allDay ?? false,
+        backgroundColor: color,
+        borderColor: color,
+        textColor: getTextColorForBg(color),
+        classNames: task.completed ? ["fc-record-done"] : undefined,
+      });
+    }
+
+    return out;
+  }, [events, tasks]);
 
   const changeView = useCallback((nextView: CalendarView) => {
     setView(nextView);
@@ -1038,6 +1075,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   }, []);
 
   const onEventClick = (eventClick: EventClickArg) => {
+    // Scheduled tasks live on the board, so surface them there rather than in
+    // the Google event editor, which has no record to load.
+    if (eventClick.event.id.startsWith("task:")) {
+      setTaskBoardExpanded(true);
+      return;
+    }
+
     const sep = eventClick.event.id.indexOf("::");
     if (sep === -1) return;
     const calendarId = eventClick.event.id.slice(0, sep);
@@ -1136,6 +1180,30 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   }, [events]);
 
   const renderEventContent = useCallback((arg: EventContentArg) => {
+    // Scheduled tasks render with a completion checkbox instead of a drag
+    // handle — same record as the board row, so it carries the same affordance.
+    if (arg.event.id.startsWith("task:")) {
+      const taskId = arg.event.id.slice("task:".length);
+      const task = tasksRef.current.find((t) => t.id === taskId);
+      return (
+        <div className="fc-event-tile-inner fc-event-tile-inner--task">
+          <button
+            aria-label={task?.completed ? "Mark task as open" : "Mark task as done"}
+            aria-pressed={task?.completed ?? false}
+            className="fc-task-check"
+            onClick={(e) => {
+              e.stopPropagation();
+              updateTask(taskId, { completed: !task?.completed });
+            }}
+            type="button"
+          >
+            {task?.completed ? <Check size={11} /> : <Circle size={11} />}
+          </button>
+          <span className="fc-event-tile-title">{arg.event.title}</span>
+        </div>
+      );
+    }
+
     const ev = eventsById.get(arg.event.id);
     if (!ev) {
       // Fall back to default text when we can't resolve (e.g. external drop preview)
@@ -1149,7 +1217,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         allDay={arg.event.allDay}
       />
     );
-  }, [eventsById]);
+  }, [eventsById, updateTask]);
 
   useEffect(() => {
     if (!expandedDate) return;
@@ -1278,6 +1346,19 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   };
 
   const updateMovedOrResizedEvent = async (change: EventChangeArg) => {
+    // A scheduled task dragged or resized on the grid is still just a task:
+    // write the new window back to the record. No Google round-trip, because
+    // there is no separate event to keep in step.
+    if (change.event.id.startsWith("task:")) {
+      const taskId = change.event.id.slice("task:".length);
+      updateTask(taskId, {
+        start: change.event.startStr,
+        end: change.event.endStr || undefined,
+        allDay: change.event.allDay,
+      });
+      return;
+    }
+
     const sep = change.event.id.indexOf("::");
     if (sep === -1) return;
     const calendarId = change.event.id.slice(0, sep);

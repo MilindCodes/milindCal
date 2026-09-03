@@ -163,6 +163,18 @@ export interface Task {
   asanaAssigneeName?: string;
   /** Origin of the task — "local" (default) or "asana" */
   source?: "local" | "asana";
+
+  /* ── Calendar facet ──────────────────────────────────────────────
+   * A task with a start time *is* a calendar entry. It is not converted
+   * into one and it does not get a linked copy — the same record simply
+   * renders in both places. Dropping a task on the calendar writes these
+   * three fields and nothing else. See lib/record.ts for the model these
+   * are the first step toward. */
+
+  /** ISO timestamp. Present means this task also appears on the calendar. */
+  start?: string;
+  end?: string;
+  allDay?: boolean;
 }
 
 export interface KanbanColumn {
