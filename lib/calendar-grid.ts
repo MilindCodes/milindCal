@@ -288,3 +288,86 @@ export function bucketByDay<T extends LaidOutInput & { allDay?: boolean }>(
   }
   return buckets;
 }
+
+/* ── Drag arithmetic ──────────────────────────────────────────────── */
+
+export type DragKind = "create" | "move" | "resize";
+
+export interface DragState {
+  kind: DragKind;
+  /** Present for move and resize; absent while creating. */
+  eventId?: string;
+  /** Day column and minute the gesture started in. */
+  fromDay: number;
+  fromMinutes: number;
+  /** Where the pointer is now. */
+  toDay: number;
+  toMinutes: number;
+  /** The dragged event's original span, so a move preserves its duration. */
+  originStart?: Date;
+  originEnd?: Date;
+  /** True once the pointer has moved far enough to count as a drag. */
+  moved: boolean;
+}
+
+export interface DragResult {
+  start: Date;
+  end: Date;
+  dayIndex: number;
+}
+
+/**
+ * Turn a drag into a concrete range.
+ *
+ * Kept here, away from React, because it is the part that can be wrong in ways
+ * a screenshot will not show: a drag upward has to normalise, a move has to
+ * keep its duration and respect where inside the tile it was grabbed, and a
+ * resize must never invert the event.
+ */
+export function resolveDrag(
+  drag: DragState,
+  days: readonly Date[],
+  axis: TimeAxis = DEFAULT_AXIS,
+): DragResult | null {
+  if (days.length === 0) return null;
+  const snap = (m: number) => Math.round(m / axis.slotMinutes) * axis.slotMinutes;
+  const clampDay = (i: number) => Math.min(days.length - 1, Math.max(0, i));
+  const at = (dayBase: Date, minutes: number) => {
+    const d = startOfDay(dayBase);
+    d.setMinutes(minutes);
+    return d;
+  };
+
+  if (drag.kind === "create") {
+    const a = snap(drag.fromMinutes);
+    const b = snap(drag.toMinutes);
+    const lo = Math.min(a, b);
+    let hi = Math.max(a, b);
+    // A drag too short to cross a slot boundary still has to make something
+    // usable rather than a zero-length event.
+    if (hi === lo) hi = lo + axis.slotMinutes;
+    const day = clampDay(drag.fromDay);
+    return { start: at(days[day], lo), end: at(days[day], hi), dayIndex: day };
+  }
+
+  if (drag.kind === "resize") {
+    if (!drag.originStart) return null;
+    const startMin = minutesInto(drag.originStart);
+    // Never invert or collapse: the end stays at least one slot past the start.
+    const endMin = Math.max(startMin + axis.slotMinutes, snap(drag.toMinutes));
+    return {
+      start: drag.originStart,
+      end: at(drag.originStart, endMin),
+      dayIndex: clampDay(drag.fromDay),
+    };
+  }
+
+  if (!drag.originStart || !drag.originEnd) return null;
+  const duration = drag.originEnd.getTime() - drag.originStart.getTime();
+  // Where inside the tile the pointer grabbed it, so the event does not jump
+  // its own top edge to the cursor on the first pixel of movement.
+  const grabOffset = drag.fromMinutes - minutesInto(drag.originStart);
+  const day = clampDay(drag.toDay);
+  const start = at(days[day], snap(drag.toMinutes - grabOffset));
+  return { start, end: new Date(start.getTime() + duration), dayIndex: day };
+}

@@ -15,6 +15,7 @@ import {
   layoutDay,
   monthWeeks,
   parseTime,
+  resolveDrag,
   sameDay,
   startOfDay,
   weekDays,
@@ -230,6 +231,126 @@ const at = (id, from, to, day = "2026-03-10") => ({
   );
 
   eq("an empty day yields an empty bucket", bucketByDay([], days).get(0).length, 0);
+}
+
+/* ── Drag arithmetic ──────────────────────────────────────────────── */
+
+{
+  const days = weekDays(new Date("2026-03-10T00:00:00"), 0); // Sun 8 .. Sat 14
+  const hhmm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const mins = (h, m = 0) => h * 60 + m;
+
+  // create, dragging downward
+  const down = resolveDrag(
+    { kind: "create", fromDay: 2, fromMinutes: mins(9), toDay: 2, toMinutes: mins(10, 30), moved: true },
+    days,
+  );
+  eq("create starts where the drag began", hhmm(down.start), "09:00");
+  eq("create ends where the drag finished", hhmm(down.end), "10:30");
+  eq("create lands on the day it began", down.dayIndex, 2);
+
+  // create, dragging upward: must normalise rather than invert
+  const up = resolveDrag(
+    { kind: "create", fromDay: 1, fromMinutes: mins(15), toDay: 1, toMinutes: mins(13), moved: true },
+    days,
+  );
+  eq("an upward create still starts before it ends", up.start < up.end, true);
+  eq("an upward create starts at the earlier edge", hhmm(up.start), "13:00");
+  eq("an upward create ends at the later edge", hhmm(up.end), "15:00");
+
+  // create with no travel: still has to make something usable
+  const flat = resolveDrag(
+    { kind: "create", fromDay: 0, fromMinutes: mins(9), toDay: 0, toMinutes: mins(9, 2), moved: true },
+    days,
+  );
+  eq("a create too short to cross a slot gets one slot", (flat.end - flat.start) / 60000, 15);
+
+  // create snaps to the slot grid
+  const snapped = resolveDrag(
+    { kind: "create", fromDay: 0, fromMinutes: mins(9, 7), toDay: 0, toMinutes: mins(10, 22), moved: true },
+    days,
+  );
+  // Nearest, not upward: 09:07 is seven minutes from 09:00 and eight from
+  // 09:15, so it belongs to 09:00. Rounding a drag up would make the grid feel
+  // like it is fighting the pointer.
+  eq("create snaps its start to the nearest slot", hhmm(snapped.start), "09:00");
+  eq("create snaps its end to the nearest slot", hhmm(snapped.end), "10:15");
+  const upper = resolveDrag(
+    { kind: "create", fromDay: 0, fromMinutes: mins(9, 8), toDay: 0, toMinutes: mins(10), moved: true },
+    days,
+  );
+  eq("a start past the midpoint snaps to the next slot", hhmm(upper.start), "09:15");
+
+  // move: duration is preserved
+  const origStart = new Date("2026-03-10T09:00:00");
+  const origEnd = new Date("2026-03-10T10:00:00");
+  const moved = resolveDrag(
+    {
+      kind: "move", eventId: "x", fromDay: 2, fromMinutes: mins(9), toDay: 2, toMinutes: mins(14),
+      originStart: origStart, originEnd: origEnd, moved: true,
+    },
+    days,
+  );
+  eq("a move keeps the duration", (moved.end - moved.start) / 60000, 60);
+  eq("a move puts the start under the pointer", hhmm(moved.start), "14:00");
+
+  // move: grabbing the middle of a tile must not snap its top to the cursor
+  const grabbed = resolveDrag(
+    {
+      kind: "move", eventId: "x", fromDay: 2, fromMinutes: mins(9, 30), toDay: 2, toMinutes: mins(14, 30),
+      originStart: origStart, originEnd: origEnd, moved: true,
+    },
+    days,
+  );
+  eq("a move respects where the tile was grabbed", hhmm(grabbed.start), "14:00");
+  eq("and still keeps the duration", (grabbed.end - grabbed.start) / 60000, 60);
+
+  // move across days
+  const crossed = resolveDrag(
+    {
+      kind: "move", eventId: "x", fromDay: 2, fromMinutes: mins(9), toDay: 5, toMinutes: mins(9),
+      originStart: origStart, originEnd: origEnd, moved: true,
+    },
+    days,
+  );
+  eq("a move can change day", crossed.dayIndex, 5);
+  eq("a cross-day move lands on that date", crossed.start.getDate(), days[5].getDate());
+  eq("a cross-day move keeps its time", hhmm(crossed.start), "09:00");
+
+  // move past the last column clamps instead of wrapping to Sunday
+  const clamped = resolveDrag(
+    {
+      kind: "move", eventId: "x", fromDay: 6, fromMinutes: mins(9), toDay: 99, toMinutes: mins(9),
+      originStart: origStart, originEnd: origEnd, moved: true,
+    },
+    days,
+  );
+  eq("a move past the last day clamps to it", clamped.dayIndex, 6);
+
+  // resize
+  const grown = resolveDrag(
+    {
+      kind: "resize", eventId: "x", fromDay: 2, fromMinutes: mins(10), toDay: 2, toMinutes: mins(12),
+      originStart: origStart, originEnd: origEnd, moved: true,
+    },
+    days,
+  );
+  eq("a resize keeps the original start", hhmm(grown.start), "09:00");
+  eq("a resize moves the end to the pointer", hhmm(grown.end), "12:00");
+
+  // resize upward past the start must not invert the event
+  const inverted = resolveDrag(
+    {
+      kind: "resize", eventId: "x", fromDay: 2, fromMinutes: mins(10), toDay: 2, toMinutes: mins(7),
+      originStart: origStart, originEnd: origEnd, moved: true,
+    },
+    days,
+  );
+  eq("a resize never inverts", inverted.end > inverted.start, true);
+  eq("a collapsed resize keeps one slot", (inverted.end - inverted.start) / 60000, 15);
+
+  eq("resolveDrag returns null with no days", resolveDrag(
+    { kind: "create", fromDay: 0, fromMinutes: 0, toDay: 0, toMinutes: 0, moved: true }, []), null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -51,10 +51,16 @@ function sampleEvents(days: Date[]): GridEvent[] {
 export function GridPreview() {
   const [anchor, setAnchor] = useState(() => new Date());
   const [dayCount, setDayCount] = useState<1 | 7>(7);
-
   const week = weekDays(anchor, 0);
   const days = dayCount === 7 ? week : [startOfDay(anchor)];
-  const events = sampleEvents(week);
+
+  // Held in state so drags actually move things: a harness where nothing
+  // changes cannot tell you whether the gesture worked.
+  const [events, setEvents] = useState<GridEvent[]>(() => sampleEvents(weekDays(new Date(), 0)));
+  const [log, setLog] = useState<string[]>([]);
+  const note = (line: string) => setLog((l) => [line, ...l].slice(0, 5));
+  const hm = (d: Date) =>
+    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", padding: 16, gap: 12 }}>
@@ -68,16 +74,37 @@ export function GridPreview() {
         <button onClick={() => setDayCount((c) => (c === 7 ? 1 : 7))} type="button">
           {dayCount === 7 ? "Day view" : "Week view"}
         </button>
+        <button onClick={() => setEvents(sampleEvents(weekDays(new Date(), 0)))} type="button">
+          Reset
+        </button>
         <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
           {days[0].toDateString()}
         </span>
       </div>
+      <pre
+        id="harness-log"
+        style={{
+          margin: 0, fontSize: "0.7rem", lineHeight: 1.5, color: "var(--ink-2)",
+          fontFamily: "var(--font-mono)", minHeight: "1.5em",
+        }}
+      >
+        {log.join("\n")}
+      </pre>
       <div style={{ flex: 1, minHeight: 0 }}>
         <TimeGrid
           days={days}
           events={events}
-          onEventClick={(e) => console.log("event", e.id, e.title)}
-          onSlotClick={(s) => console.log("slot", s.toString())}
+          onCreate={(start, end) => {
+            const id = "new-" + Math.random().toString(36).slice(2, 7);
+            setEvents((prev) => [...prev, { id, title: "New event", accent: "#b42a3a", start, end }]);
+            note(`create  ${start.toDateString().slice(0, 10)}  ${hm(start)}–${hm(end)}`);
+          }}
+          onEventChange={(id, start, end) => {
+            setEvents((prev) => prev.map((e) => (e.id === id ? { ...e, start, end } : e)));
+            note(`change  ${id}  ${start.toDateString().slice(0, 10)}  ${hm(start)}–${hm(end)}`);
+          }}
+          onEventClick={(e) => note("click   " + e.title)}
+          onSlotClick={(s) => note("slot    " + hm(s))}
         />
       </div>
     </div>

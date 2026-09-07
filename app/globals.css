@@ -9001,3 +9001,73 @@ a.primary-button {
   color: var(--ink-2);
   margin-right: 5px;
 }
+
+/* ── Time grid interactions ──────────────────────────────────────── */
+
+.tg__col {
+  touch-action: none; /* let the grid own vertical drags instead of scrolling */
+}
+
+/* The grip is a hit area, not an ornament: 8px is about the smallest edge a
+ * pointer finds reliably, and it only reveals itself on hover so tiles stay
+ * quiet when nothing is being dragged. */
+.tg__resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 8px;
+  cursor: ns-resize;
+  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.tg__event:hover .tg__resize {
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--accent) 45%, transparent)
+  );
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .tg__event:hover .tg__resize { background: var(--sand); }
+}
+
+.tg__event {
+  cursor: grab;
+  touch-action: none;
+}
+
+/* The tile being dragged fades rather than disappearing, so the original
+ * position stays legible while the preview shows the destination. */
+.tg__event.is-dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.tg__preview {
+  position: absolute;
+  left: 1px;
+  right: 2px;
+  border: 2px dashed var(--cherry);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--cherry) 10%, transparent);
+  pointer-events: none;
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  padding: 2px 4px;
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .tg__preview { background: rgba(180, 42, 58, 0.1); }
+}
+
+.tg__preview-time {
+  font-family: var(--font-ui);
+  font-size: 0.66rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--cherry-ink);
+}

@@ -17,7 +17,8 @@
  * JavaScript and no measurement pass.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useGridDrag } from "./use-grid-drag";
 import {
   DEFAULT_AXIS,
   addDays,
@@ -25,6 +26,7 @@ import {
   fractionOf,
   intersectsAxis,
   layoutDay,
+  resolveDrag,
   minutesInto,
   sameDay,
   startOfDay,
@@ -48,8 +50,15 @@ interface TimeGridProps {
   onEventClick?: (event: GridEvent) => void;
   /** Clicking an empty slot, rounded down to the slot the pointer is in. */
   onSlotClick?: (start: Date) => void;
+  /** A tile was dragged or resized to a new range. */
+  onEventChange?: (id: string, start: Date, end: Date) => void;
+  /** An empty range was dragged out. */
+  onCreate?: (start: Date, end: Date) => void;
   nowIndicator?: boolean;
 }
+
+/** How long after a drag a click is treated as that drag's own click. */
+const CLICK_AFTER_DRAG_MS = 300;
 
 /** Hour labels only: a label every 15 minutes is noise. */
 function hourLines(axis: TimeAxis): number[] {
@@ -73,9 +82,20 @@ export function TimeGrid({
   renderEvent,
   onEventClick,
   onSlotClick,
+  onEventChange,
+  onCreate,
   nowIndicator = true,
 }: TimeGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  /* A drag ends with a pointerup, and the browser follows that with a click,
+   * which must not also read as "opened this tile" or "clicked this slot".
+   *
+   * A boolean latch is wrong here: a drag that ends outside the element fires
+   * no click at all, so the latch stays armed and eats the next real click
+   * somewhere else — drag one event, then click another, and nothing happens.
+   * A timestamp cannot get stuck: it only suppresses the click that genuinely
+   * follows a drag, and heals itself a moment later. */
+  const lastDragEnd = useRef(0);
   const [now, setNow] = useState(() => new Date());
 
   // The indicator only needs minute resolution; ticking faster would re-render
@@ -144,6 +164,34 @@ export function TimeGrid({
     minutesInto(now) >= axis.minMinutes &&
     minutesInto(now) <= axis.maxMinutes;
 
+  const handleCommit = useCallback(
+    (kind: "create" | "move" | "resize", result: { start: Date; end: Date }, id?: string) => {
+      lastDragEnd.current = Date.now();
+      if (kind === "create") onCreate?.(result.start, result.end);
+      else if (id) onEventChange?.(id, result.start, result.end);
+    },
+    [onCreate, onEventChange],
+  );
+
+  const { bodyRef, drag, begin } = useGridDrag({ days, axis, onCommit: handleCommit });
+
+  // What the drag currently describes, drawn as a preview so the gesture shows
+  // its result before it is committed.
+  const preview = useMemo(() => {
+    if (!drag || !drag.moved) return null;
+    const r = resolveDrag(drag, days, axis);
+    if (!r) return null;
+    return {
+      dayIndex: r.dayIndex,
+      top: fractionOf(minutesInto(r.start), axis),
+      height: Math.max(
+        0.012,
+        fractionOf(minutesInto(r.end) || axis.maxMinutes, axis) - fractionOf(minutesInto(r.start), axis),
+      ),
+      label: r.start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+    };
+  }, [drag, days, axis]);
+
   const columns = `var(--tg-gutter) repeat(${days.length}, minmax(0, 1fr))`;
 
   return (
@@ -190,7 +238,7 @@ export function TimeGrid({
       ) : null}
 
       <div className="tg__scroll" ref={scrollRef}>
-        <div className="tg__body" style={{ gridTemplateColumns: columns }}>
+        <div className="tg__body" ref={bodyRef} style={{ gridTemplateColumns: columns }}>
           <div className="tg__gutter">
             {hours.map((m) => (
               <span
@@ -207,7 +255,12 @@ export function TimeGrid({
             <div
               className={`tg__col${sameDay(day, now) ? " is-today" : ""}`}
               key={day.toISOString()}
+              onPointerDown={(e) => {
+                if (e.target !== e.currentTarget) return; // started on a tile
+                begin(e, "create", i);
+              }}
               onClick={(e) => {
+                if (Date.now() - lastDragEnd.current < CLICK_AFTER_DRAG_MS) return;
                 if (!onSlotClick || e.target !== e.currentTarget) return;
                 const rect = e.currentTarget.getBoundingClientRect();
                 const frac = (e.clientY - rect.top) / rect.height;
@@ -228,9 +281,20 @@ export function TimeGrid({
             >
               {laidOut[i].map((slot) => (
                 <button
-                  className={`tg__event${slot.event.done ? " is-done" : ""}`}
+                  className={
+                    "tg__event" +
+                    (slot.event.done ? " is-done" : "") +
+                    (drag?.moved && drag.eventId === slot.event.id ? " is-dragging" : "")
+                  }
                   key={slot.event.id}
-                  onClick={() => onEventClick?.(slot.event)}
+                  onClick={() => {
+                    if (Date.now() - lastDragEnd.current < CLICK_AFTER_DRAG_MS) return;
+                    onEventClick?.(slot.event);
+                  }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    begin(e, "move", i, slot.event);
+                  }}
                   style={{
                     top: `${slot.top * 100}%`,
                     height: `${slot.height * 100}%`,
@@ -243,8 +307,27 @@ export function TimeGrid({
                   {renderEvent ? renderEvent(slot.event) : (
                     <span className="tg__event-title">{slot.event.title}</span>
                   )}
+                  {/* Resize grip. A span rather than a button: it is a drag
+                    * target only, and a second tab stop per event would make
+                    * the grid impossible to tab past. */}
+                  <span
+                    className="tg__resize"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      begin(e, "resize", i, slot.event);
+                    }}
+                  />
                 </button>
               ))}
+
+              {preview && preview.dayIndex === i ? (
+                <div
+                  className="tg__preview"
+                  style={{ top: `${preview.top * 100}%`, height: `${preview.height * 100}%` }}
+                >
+                  <span className="tg__preview-time">{preview.label}</span>
+                </div>
+              ) : null}
 
               {nowVisible && i === todayIndex ? (
                 <div className="tg__now" style={{ top: `${nowFraction * 100}%` }} />
