@@ -1523,13 +1523,6 @@ textarea {
   font-weight: 500;
   white-space: nowrap;
 }
-
-.task-importance-badge {
-  color: var(--importance-color, var(--muted));
-  background: color-mix(in srgb, var(--importance-color, var(--ink-2)) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--importance-color, var(--ink-2)) 25%, transparent);
-}
-
 .task-due-badge {
   color: #b45309;
   background: rgba(245, 158, 11, 0.1);
@@ -4707,15 +4700,6 @@ textarea {
   color: var(--ink);
   border-color: #bdc1c6;
 }
-
-.docs-section-brand {
-  font-size: 1rem;
-  font-weight: 500;
-  color: var(--ink);
-  letter-spacing: -0.01em;
-  pointer-events: none;
-}
-
 /* ── Body layout ── */
 
 .docs-body {
@@ -4771,15 +4755,6 @@ textarea {
 .docs-graph-resize-handle:active {
   background: rgba(26, 115, 232, 0.25);
 }
-
-/* ── Sticky notes panel ── */
-
-.docs-sticky-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
 .docs-sticky-panel-header {
   display: flex;
   align-items: center;
@@ -4822,18 +4797,6 @@ textarea {
   flex-direction: column;
   gap: 12px;
 }
-
-.sticky-note-card {
-  border-radius: var(--radius-md);
-  padding: 12px 12px 10px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.05);
-  transition: box-shadow 0.18s;
-}
-
-.sticky-note-card:hover {
-  box-shadow: 0 3px 12px rgba(0,0,0,0.13);
-}
-
 .sticky-note-text {
   font-size: 0.85rem;
   line-height: 1.6;
@@ -5064,35 +5027,6 @@ textarea {
   color: #137333;
   background: #e6f4ea;
 }
-
-.gd-action-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 0.78rem;
-  font-weight: 500;
-  padding: 5px 11px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--ink-2);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-}
-
-.gd-action-chip:hover {
-  background: var(--paper-2);
-  color: var(--ink);
-  border-color: #bdc1c6;
-}
-
-.gd-action-chip.active {
-  background: var(--surface-soft);
-  color: var(--cherry);
-  border-color: rgba(26, 115, 232, 0.35);
-}
-
 /* ── Formatting toolbar ── */
 
 .gd-toolbar {
@@ -5140,15 +5074,6 @@ textarea {
   opacity: 0.32;
   cursor: default;
 }
-
-.gd-toolbar-sep {
-  width: 1px;
-  height: 20px;
-  background: #e0e0e0;
-  margin: 0 4px;
-  flex-shrink: 0;
-}
-
 /* Paragraph style dropdown */
 .gd-style-dropdown {
   position: relative;
@@ -5541,75 +5466,15 @@ textarea {
 .docs-sidebar__pane--notes {
   padding: 14px 12px 20px;
 }
-
-/* ── Google Drive-style header ── */
-
-.gd-sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 12px 8px;
-  flex-shrink: 0;
-}
-
-.gd-sidebar-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--ink);
-}
-
 .gd-sidebar-header-actions {
   display: flex;
   align-items: center;
   gap: 4px;
 }
-
-.gd-icon-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: var(--ink-2);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, color 0.15s;
-  flex-shrink: 0;
-}
-
-.gd-icon-btn:hover {
-  background: var(--paper-2);
-  color: var(--ink);
-}
-
-.gd-icon-btn.active {
-  background: var(--surface-soft);
-  color: var(--cherry);
-}
-
 /* Sort menu */
 .gd-sort-wrapper {
   position: relative;
 }
-
-.gd-sort-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 200;
-  background: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: var(--radius-md);
-  padding: 6px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.14);
-  min-width: 148px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 .gd-sort-menu__label {
   font-size: 0.65rem;
   font-weight: 600;
@@ -5634,11 +5499,6 @@ textarea {
   cursor: pointer;
   transition: background 0.1s;
 }
-
-.gd-sort-option:hover {
-  background: var(--paper-2);
-}
-
 .gd-sort-option.active {
   background: var(--surface-soft);
   color: var(--cherry);
@@ -5663,12 +5523,6 @@ textarea {
   box-shadow: 0 8px 24px rgba(139, 69, 19, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.3);
   backdrop-filter: blur(8px);
 }
-
-.gd-new-doc-btn:hover {
-  box-shadow: 0 12px 32px rgba(139, 69, 19, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  transform: translateY(-2px) scale(1.02);
-}
-
 /* Search */
 .gd-search {
   display: flex;
@@ -5743,17 +5597,6 @@ textarea {
   flex-direction: column;
   margin-bottom: 4px;
 }
-
-.gd-date-group__label {
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  padding: 10px 10px 4px;
-  flex-shrink: 0;
-}
-
 /* File item */
 .gd-file-item {
   display: flex;
@@ -5797,20 +5640,6 @@ textarea {
   background: rgba(0,0,0,0.05);
   box-shadow: inset 0 0 0 1.5px rgba(26,115,232,0.3);
 }
-
-.gd-file-icon {
-  flex-shrink: 0;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-soft);
-  color: var(--cherry);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-}
-
 .gd-file-icon--cal {
   background: #fce8e6;
   color: var(--cherry);
@@ -5834,20 +5663,6 @@ textarea {
   flex-direction: column;
   gap: 2px;
 }
-
-.gd-file-title {
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.gd-file-item.active .gd-file-title {
-  color: var(--cherry);
-}
-
 .gd-file-meta {
   display: flex;
   align-items: center;
@@ -6775,11 +6590,6 @@ textarea {
   font-size: 0.72rem;
   transition: color 0.3s;
 }
-
-.doc-save-indicator.saved {
-  color: #16a34a;
-}
-
 .doc-status-sep {
   /* was #d1d5db at 1.42:1, then --muted at 4.34:1 */
   color: var(--ink-2);
@@ -6820,27 +6630,6 @@ textarea {
   width: 100%;
   font-family: inherit;
 }
-
-.gd-context-item:hover {
-  background: #f3f4f6;
-  color: var(--ink);
-}
-
-.gd-context-item--danger {
-  color: #dc2626;
-}
-
-.gd-context-item--danger:hover {
-  background: #fef2f2;
-  color: #b91c1c;
-}
-
-.gd-context-divider {
-  height: 1px;
-  background: rgba(0,0,0,0.06);
-  margin: 3px 0;
-}
-
 /* ── File meta ── */
 
 .gd-file-meta {
@@ -6866,12 +6655,6 @@ textarea {
   padding: 1px 5px;
   letter-spacing: 0.01em;
 }
-
-.gd-footer-sep {
-  /* was #d1d5db at 1.52:1, then --muted at 4.34:1 */
-  color: var(--ink-2);
-}
-
 /* ── Empty state CTA button ── */
 
 .gd-empty-icon {
@@ -6967,11 +6750,6 @@ textarea {
   box-shadow: 0 4px 14px rgba(26,115,232,0.4);
   transition: box-shadow 0.2s, transform 0.1s;
 }
-
-.docs-empty-create-btn:hover {
-  box-shadow: 0 6px 20px rgba(26,115,232,0.5);
-}
-
 /* ── Date group label ── */
 
 .gd-date-group__label {
@@ -8209,14 +7987,6 @@ a.primary-button {
   font-family: var(--font-mono);
   font-size: 0.68rem;
 }
-
-.sheet__cell.is-selected {
-  /* Inset ring rather than an outline so the selection never shifts layout
-   * or gets clipped by the neighbouring cell's border. */
-  box-shadow: inset 0 0 0 2px var(--cherry);
-  background: color-mix(in srgb, var(--cherry) 4%, var(--salt));
-}
-
 .sheet__editor {
   width: 100%;
   border: none;
