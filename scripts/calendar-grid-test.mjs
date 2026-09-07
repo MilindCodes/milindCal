@@ -11,6 +11,7 @@ import {
   axisSlots,
   bucketByDay,
   fractionOf,
+  intersectsAxis,
   layoutDay,
   monthWeeks,
   parseTime,
@@ -174,6 +175,27 @@ const at = (id, from, to, day = "2026-03-10") => ({
 
   const tiny = layoutDay([at("a", "09:00", "09:01")]);
   eq("a one-minute event keeps a clickable minimum height", tiny[0].height >= 0.012, true);
+}
+
+/* ── Axis intersection ────────────────────────────────────────────── */
+
+{
+  // The axis opens at 06:30, so "inside the day" and "inside the axis" are
+  // different questions. Getting this wrong stacks unrelated events on the
+  // same pixel at the top of the column.
+  eq("an event inside the axis intersects it", intersectsAxis(at("a", "09:00", "10:00")), true);
+  eq("an event entirely before the axis does not", intersectsAxis(at("b", "00:00", "02:00")), false);
+  eq("an event ending exactly at the axis start does not", intersectsAxis(at("c", "05:00", "06:30")), false);
+  eq("an event straddling the axis start does", intersectsAxis(at("d", "05:00", "07:30")), true);
+  eq("an event ending one minute after the axis start does", intersectsAxis(at("e", "05:00", "06:31")), true);
+  eq("an event at the very end of the axis does", intersectsAxis(at("f", "23:00", "23:59")), true);
+
+  // Two events that never overlap in time must not both be placed on the axis
+  // when one of them falls entirely outside it — that was the visual collision.
+  const day = [at("early", "00:00", "02:00"), at("flight", "05:00", "07:30")];
+  const onAxis = day.filter((e) => intersectsAxis(e));
+  eq("only the event touching the axis is laid out", onAxis.length, 1);
+  eq("and it is the right one", onAxis[0].id, "flight");
 }
 
 /* ── Bucketing across days ────────────────────────────────────────── */

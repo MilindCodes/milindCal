@@ -8706,3 +8706,298 @@ a.primary-button {
   max-height: 100%;
   transform: translate(-50%, -50%);
 }
+
+/* ══ Time grid — milindCal's own calendar ═════════════════════════════
+ *
+ * Replaces FullCalendar's markup for the day and week views. Geometry comes
+ * from lib/calendar-grid; everything here is presentation.
+ *
+ * Slot rules are painted as repeating gradients rather than elements: a week
+ * at 15-minute resolution would otherwise be 490 divs that exist only to draw
+ * a line and can never be clicked.
+ */
+
+.tg {
+  /* The decorative .paper-bg carries z-index: 0, which makes it a stacking
+   * context that paints over anything unpositioned. The sign-in page hit the
+   * same thing and was fixed the same way: take a layer of our own. */
+  position: relative;
+  z-index: 1;
+  --tg-gutter: 56px;
+  --tg-slot-line: color-mix(in srgb, var(--ink) 6%, transparent);
+  --tg-hour-line: color-mix(in srgb, var(--ink) 13%, transparent);
+  --tg-row-height: 1680px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--salt);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .tg {
+    --tg-slot-line: rgba(42, 20, 24, 0.06);
+    --tg-hour-line: rgba(42, 20, 24, 0.13);
+  }
+}
+
+/* ── Day headers ─────────────────────────────────────────────────── */
+
+.tg__head {
+  display: grid;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper-1);
+}
+
+.tg__corner {
+  border-right: 1px solid var(--line);
+}
+
+.tg__dayhead {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 8px 4px 7px;
+  border-right: 1px solid var(--line);
+}
+
+.tg__dayhead:last-child {
+  border-right: none;
+}
+
+.tg__dayname {
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+}
+
+.tg__daynum {
+  font-family: var(--font-display);
+  font-size: 1.24rem;
+  line-height: 1.1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Today is marked on the number alone. Tinting the whole column header as
+ * well would compete with the tint already running down the column itself. */
+.tg__dayhead.is-today .tg__daynum {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.75em;
+  height: 1.75em;
+  border-radius: 50%;
+  background: var(--cherry);
+  color: var(--salt);
+}
+
+.tg__dayhead.is-today .tg__dayname {
+  color: var(--cherry-ink);
+}
+
+/* ── All-day row ─────────────────────────────────────────────────── */
+
+.tg__allday {
+  display: grid;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper-1);
+  max-height: 84px;
+  overflow-y: auto;
+}
+
+.tg__allday-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border-right: 1px solid var(--line);
+}
+
+.tg__allday-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 3px;
+  border-right: 1px solid var(--line);
+  min-width: 0;
+}
+
+.tg__allday-cell:last-child {
+  border-right: none;
+}
+
+.tg__chip {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 2px 6px;
+  border: none;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 14%, var(--salt));
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.tg__chip:hover {
+  background: color-mix(in srgb, var(--accent) 24%, var(--salt));
+}
+
+/* ── Scrolling body ──────────────────────────────────────────────── */
+
+.tg__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.tg__body {
+  display: grid;
+  height: var(--tg-row-height);
+  position: relative;
+}
+
+.tg__gutter {
+  position: relative;
+  border-right: 1px solid var(--line);
+}
+
+/* Labels sit on the hour line they name, not below it. */
+.tg__hour {
+  position: absolute;
+  right: 8px;
+  transform: translateY(-50%);
+  font-family: var(--font-ui);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.tg__col {
+  position: relative;
+  border-right: 1px solid var(--line);
+  min-width: 0;
+}
+
+.tg__col:last-child {
+  border-right: none;
+}
+
+.tg__col.is-today {
+  background-color: color-mix(in srgb, var(--cherry) 3.5%, transparent);
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .tg__col.is-today { background-color: rgba(180, 42, 58, 0.04); }
+  .tg__chip { background: var(--paper-2); }
+}
+
+/* ── Event tiles ─────────────────────────────────────────────────── */
+
+.tg__event {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 3px 6px 3px 7px;
+  border: none;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 15%, var(--salt));
+  color: var(--ink);
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(42, 20, 24, 0.08);
+  transition:
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.tg__event:hover {
+  background: color-mix(in srgb, var(--accent) 26%, var(--salt));
+  box-shadow: 0 2px 8px rgba(42, 20, 24, 0.14);
+  z-index: 3;
+}
+
+.tg__event:focus-visible {
+  outline: 2px solid var(--cherry);
+  outline-offset: 1px;
+  z-index: 4;
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .tg__event { background: var(--paper-2); }
+  .tg__event:hover { background: var(--sand); }
+}
+
+.tg__event-title {
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.tg__event.is-done .tg__event-title {
+  text-decoration: line-through;
+  color: var(--ink-2);
+}
+
+/* ── Now indicator ───────────────────────────────────────────────── */
+
+.tg__now {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 2px solid var(--cherry);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.tg__now::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cherry);
+}
+
+/* Off-axis chips carry their clock time, so a 2am event in the strip reads as
+ * a real time rather than as an all-day entry. */
+.tg__chip-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin-right: 5px;
+}

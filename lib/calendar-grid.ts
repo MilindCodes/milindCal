@@ -238,6 +238,27 @@ export function layoutDay<T extends LaidOutInput>(
 }
 
 /**
+ * Whether an event has any part inside the axis.
+ *
+ * The axis does not start at midnight — it opens at 06:30 by default — so an
+ * event can be clipped to a day and still fall entirely outside the visible
+ * hours. Drawing those anyway is worse than useless: they clamp to the very
+ * top, which puts a 2am event at the 06:30 line, and two events that never
+ * overlapped in time end up stacked on the same pixel hiding each other.
+ *
+ * The grid uses this to keep them off the axis and show them as chips instead,
+ * so they are neither lost nor drawn at a time they do not happen.
+ */
+export function intersectsAxis(ev: LaidOutInput, axis: TimeAxis = DEFAULT_AXIS): boolean {
+  const startMin = minutesInto(ev.start);
+  const endsNextDay = !sameDay(ev.start, ev.end) && ev.end.getTime() > ev.start.getTime();
+  const endMin = endsNextDay ? axis.maxMinutes : minutesInto(ev.end);
+  // Touching the boundary is not intersecting: an event ending exactly at
+  // 06:30 has nothing to draw on a 06:30 axis.
+  return endMin > axis.minMinutes && startMin < axis.maxMinutes;
+}
+
+/**
  * Split events into the day columns of a view.
  *
  * An event is returned once per day it touches, clipped to that day, so a
