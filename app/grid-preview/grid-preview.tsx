@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { MonthGrid, YearGrid } from "@/components/calendar-grid/month-grid";
 import { TimeGrid, type GridEvent } from "@/components/calendar-grid/time-grid";
 import { addDays, startOfDay, weekDays } from "@/lib/calendar-grid";
 
@@ -50,7 +51,8 @@ function sampleEvents(days: Date[]): GridEvent[] {
 
 export function GridPreview() {
   const [anchor, setAnchor] = useState(() => new Date());
-  const [dayCount, setDayCount] = useState<1 | 7>(7);
+  const [view, setView] = useState<"week" | "day" | "month" | "year">("week");
+  const dayCount = view === "day" ? 1 : 7;
   const week = weekDays(anchor, 0);
   const days = dayCount === 7 ? week : [startOfDay(anchor)];
 
@@ -71,9 +73,16 @@ export function GridPreview() {
         <button onClick={() => setAnchor((d) => addDays(d, -7))} type="button">Prev</button>
         <button onClick={() => setAnchor(new Date())} type="button">Today</button>
         <button onClick={() => setAnchor((d) => addDays(d, 7))} type="button">Next</button>
-        <button onClick={() => setDayCount((c) => (c === 7 ? 1 : 7))} type="button">
-          {dayCount === 7 ? "Day view" : "Week view"}
-        </button>
+        {(["week", "day", "month", "year"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            style={{ fontWeight: view === v ? 700 : 400 }}
+            type="button"
+          >
+            {v}
+          </button>
+        ))}
         <button onClick={() => setEvents(sampleEvents(weekDays(new Date(), 0)))} type="button">
           Reset
         </button>
@@ -91,6 +100,21 @@ export function GridPreview() {
         {log.join("\n")}
       </pre>
       <div style={{ flex: 1, minHeight: 0 }}>
+        {view === "month" ? (
+          <MonthGrid
+            anchor={anchor}
+            events={events}
+            onDayClick={(d) => note("day     " + d.toDateString())}
+            onEventClick={(e) => note("click   " + e.title)}
+            onMoreClick={(d, n) => note(`more    ${d.toDateString()}  +${n}`)}
+          />
+        ) : view === "year" ? (
+          <YearGrid
+            events={events}
+            onDayClick={(d) => note("day     " + d.toDateString())}
+            year={anchor.getFullYear()}
+          />
+        ) : (
         <TimeGrid
           days={days}
           events={events}
@@ -106,6 +130,7 @@ export function GridPreview() {
           onEventClick={(e) => note("click   " + e.title)}
           onSlotClick={(s) => note("slot    " + hm(s))}
         />
+        )}
       </div>
     </div>
   );

@@ -12,7 +12,9 @@ import {
   bucketByDay,
   fractionOf,
   intersectsAxis,
+  capMonthWeek,
   layoutDay,
+  layoutMonthWeek,
   monthWeeks,
   parseTime,
   resolveDrag,
@@ -351,6 +353,83 @@ const at = (id, from, to, day = "2026-03-10") => ({
 
   eq("resolveDrag returns null with no days", resolveDrag(
     { kind: "create", fromDay: 0, fromMinutes: 0, toDay: 0, toMinutes: 0, moved: true }, []), null);
+}
+
+/* ── Month spanning bars ──────────────────────────────────────────── */
+
+{
+  const week = weekDays(new Date("2026-03-10T00:00:00"), 0); // Sun 8 .. Sat 14
+  const span = (id, fromDay, toDay) => ({
+    id,
+    start: startOfDay(week[fromDay]),
+    end: addDays(startOfDay(week[toDay]), 1),
+  });
+
+  // A multi-day event is one bar across cells, not a copy per day.
+  const one = layoutMonthWeek([span("a", 1, 3)], week);
+  eq("a multi-day event is a single segment", one.length, 1);
+  eq("it starts in the right column", one[0].startCol, 1);
+  eq("it ends in the right column", one[0].endCol, 3);
+  eq("a contained event is not marked as continuing", one[0].continuesBefore || one[0].continuesAfter, false);
+
+  // A single day occupies exactly one column.
+  const solo = layoutMonthWeek([span("b", 2, 2)], week);
+  eq("a one-day event spans a single column", solo[0].startCol === solo[0].endCol, true);
+
+  // Ending exactly at midnight belongs to the previous day.
+  const midnight = layoutMonthWeek(
+    [{ id: "m", start: startOfDay(week[1]), end: startOfDay(week[3]) }],
+    week,
+  );
+  eq("an event ending at midnight does not claim the next day", midnight[0].endCol, 2);
+
+  // Overlapping spans take separate lanes; disjoint ones share a lane.
+  const stacked = layoutMonthWeek([span("a", 0, 3), span("b", 2, 5)], week);
+  eq("overlapping spans take different lanes", stacked[0].lane !== stacked[1].lane, true);
+  const sideBySide = layoutMonthWeek([span("a", 0, 1), span("b", 3, 4)], week);
+  eq("disjoint spans share a lane", sideBySide[0].lane === sideBySide[1].lane, true);
+
+  // Longest first, so long bars settle at the top of the cell.
+  const mixed = layoutMonthWeek([span("short", 2, 2), span("long", 0, 6)], week);
+  const long = mixed.find((s) => s.event.id === "long");
+  const short = mixed.find((s) => s.event.id === "short");
+  eq("the longer bar takes the upper lane", long.lane < short.lane, true);
+
+  // Events crossing the week boundary are flagged so their ends draw open.
+  const before = layoutMonthWeek(
+    [{ id: "x", start: addDays(startOfDay(week[0]), -2), end: addDays(startOfDay(week[1]), 1) }],
+    week,
+  );
+  eq("an event starting earlier is clipped to the first column", before[0].startCol, 0);
+  eq("and flagged as continuing before", before[0].continuesBefore, true);
+
+  const after = layoutMonthWeek(
+    [{ id: "y", start: startOfDay(week[5]), end: addDays(startOfDay(week[6]), 3) }],
+    week,
+  );
+  eq("an event running past the week is clipped to the last column", after[0].endCol, 6);
+  eq("and flagged as continuing after", after[0].continuesAfter, true);
+
+  // Outside the week entirely.
+  const outside = layoutMonthWeek(
+    [{ id: "z", start: addDays(startOfDay(week[0]), -10), end: addDays(startOfDay(week[0]), -9) }],
+    week,
+  );
+  eq("an event outside the week produces no segment", outside.length, 0);
+
+  // Capping reports what each day is hiding, not one count for the week.
+  const many = layoutMonthWeek(
+    [span("a", 1, 1), span("b", 1, 1), span("c", 1, 1), span("d", 4, 4)],
+    week,
+  );
+  const capped = capMonthWeek(many, 2);
+  eq("capping keeps only the lanes that fit", capped.visible.every((s) => s.lane < 2), true);
+  eq("the crowded day reports its overflow", capped.hiddenPerDay[1], 1);
+  eq("an uncrowded day reports none", capped.hiddenPerDay[4], 0);
+  eq("a budget nothing exceeds hides nothing",
+     capMonthWeek(many, 10).hiddenPerDay.every((n) => n === 0), true);
+
+  eq("an empty week lays out to nothing", layoutMonthWeek([], week).length, 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

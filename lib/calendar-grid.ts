@@ -371,3 +371,111 @@ export function resolveDrag(
   const start = at(days[day], snap(drag.toMinutes - grabOffset));
   return { start, end: new Date(start.getTime() + duration), dayIndex: day };
 }
+
+/* ── Month layout ─────────────────────────────────────────────────── */
+
+export interface MonthSegment<T extends LaidOutInput = LaidOutInput> {
+  event: T;
+  /** Inclusive column range within the week, 0..6. */
+  startCol: number;
+  endCol: number;
+  /** Which row inside the cell this bar occupies. */
+  lane: number;
+  /** The event began before this week, or runs past it. */
+  continuesBefore: boolean;
+  continuesAfter: boolean;
+}
+
+/**
+ * Lay one week of a month view out as spanning bars.
+ *
+ * A three-day event has to read as one bar crossing three cells, not as three
+ * separate copies — that difference is most of what makes a month view
+ * legible. Each week is solved independently, because a bar cannot cross the
+ * end of a row anyway; an event spanning a week boundary becomes one segment
+ * per week, flagged so the ends can be drawn open.
+ *
+ * Lanes are assigned greedily, longest first, so long events settle at the top
+ * of the cell and short ones fill in beneath rather than pushing them around.
+ */
+export function layoutMonthWeek<T extends LaidOutInput>(
+  events: readonly T[],
+  week: readonly Date[],
+): MonthSegment<T>[] {
+  if (week.length === 0) return [];
+  const weekStart = startOfDay(week[0]);
+  const weekEnd = addDays(startOfDay(week[week.length - 1]), 1);
+
+  const spans: MonthSegment<T>[] = [];
+  for (const ev of events) {
+    if (ev.start.getTime() >= weekEnd.getTime() || ev.end.getTime() <= weekStart.getTime()) continue;
+    let startCol = 0;
+    let endCol = week.length - 1;
+    for (let i = 0; i < week.length; i++) {
+      const dayStart = startOfDay(week[i]);
+      const dayEnd = addDays(dayStart, 1);
+      if (ev.start.getTime() >= dayStart.getTime() && ev.start.getTime() < dayEnd.getTime()) startCol = i;
+      // An event ending exactly at midnight belongs to the previous day, not
+      // to the one it touches for zero minutes.
+      if (ev.end.getTime() > dayStart.getTime() && ev.end.getTime() <= dayEnd.getTime()) endCol = i;
+    }
+    if (ev.start.getTime() < weekStart.getTime()) startCol = 0;
+    if (ev.end.getTime() > weekEnd.getTime()) endCol = week.length - 1;
+    spans.push({
+      event: ev,
+      startCol,
+      endCol: Math.max(startCol, endCol),
+      lane: 0,
+      continuesBefore: ev.start.getTime() < weekStart.getTime(),
+      continuesAfter: ev.end.getTime() > weekEnd.getTime(),
+    });
+  }
+
+  // Longest first so multi-day bars take the top lanes.
+  spans.sort(
+    (a, b) =>
+      b.endCol - b.startCol - (a.endCol - a.startCol) ||
+      a.startCol - b.startCol ||
+      a.event.start.getTime() - b.event.start.getTime(),
+  );
+
+  const lanes: MonthSegment<T>[][] = [];
+  for (const seg of spans) {
+    let placed = false;
+    for (let l = 0; l < lanes.length; l++) {
+      const clash = lanes[l].some((o) => seg.startCol <= o.endCol && o.startCol <= seg.endCol);
+      if (!clash) {
+        seg.lane = l;
+        lanes[l].push(seg);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      seg.lane = lanes.length;
+      lanes.push([seg]);
+    }
+  }
+
+  return spans.sort((a, b) => a.lane - b.lane || a.startCol - b.startCol);
+}
+
+/**
+ * Trim a week's segments to a lane budget, reporting what was hidden per day.
+ *
+ * A month cell can only show so much before it stops being readable. Anything
+ * past the budget is dropped and counted per column, so each day can offer a
+ * "+N more" of its own rather than one count for the whole week.
+ */
+export function capMonthWeek<T extends LaidOutInput>(
+  segments: readonly MonthSegment<T>[],
+  maxLanes: number,
+): { visible: MonthSegment<T>[]; hiddenPerDay: number[] } {
+  const visible = segments.filter((s) => s.lane < maxLanes);
+  const hiddenPerDay = Array.from({ length: 7 }, () => 0);
+  for (const s of segments) {
+    if (s.lane < maxLanes) continue;
+    for (let c = s.startCol; c <= s.endCol; c++) hiddenPerDay[c] += 1;
+  }
+  return { visible, hiddenPerDay };
+}

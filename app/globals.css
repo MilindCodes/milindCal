@@ -9071,3 +9071,294 @@ a.primary-button {
   font-variant-numeric: tabular-nums;
   color: var(--cherry-ink);
 }
+
+/* ══ Month grid ═══════════════════════════════════════════════════════
+ *
+ * Multi-day events are bars floating above the cells, so one bar can cross
+ * several days. The cells own the day numbers and the "+N more"; the bars
+ * layer sits on top and is transparent to pointer events except on the bars
+ * themselves, so clicking empty space still lands on the day underneath.
+ */
+
+.mg {
+  --mg-daynum-h: 22px;
+  --mg-lane-h: 19px;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--salt);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.mg__head {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  flex-shrink: 0;
+  background: var(--paper-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.mg__weekday {
+  padding: 7px 4px;
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  border-right: 1px solid var(--line);
+}
+
+.mg__weekday:last-child { border-right: none; }
+
+.mg__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: repeat(6, minmax(0, 1fr));
+}
+
+.mg__week {
+  position: relative;
+  min-height: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.mg__week:last-child { border-bottom: none; }
+
+.mg__cells {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  height: 100%;
+}
+
+.mg__cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 3px 4px;
+  border-right: 1px solid var(--line);
+  min-width: 0;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.mg__cell:last-child { border-right: none; }
+
+.mg__cell:hover {
+  background: color-mix(in srgb, var(--cherry) 4%, transparent);
+}
+
+/* Days from the neighbouring month stay legible but recede — dimming them to
+ * near-invisible makes the grid's shape harder to read, not easier. */
+.mg__cell.is-outside .mg__daynum {
+  color: var(--muted);
+  opacity: 0.65;
+}
+
+.mg__cell.is-outside {
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+
+.mg__daynum {
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  line-height: 1;
+  padding: 2px 3px;
+}
+
+.mg__cell.is-today .mg__daynum {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6em;
+  height: 1.6em;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--cherry);
+  color: var(--salt);
+  font-weight: 600;
+}
+
+.mg__more {
+  margin-top: auto;
+  border: none;
+  background: none;
+  padding: 1px 3px;
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.mg__more:hover {
+  background: color-mix(in srgb, var(--cherry) 12%, transparent);
+  color: var(--cherry-ink);
+}
+
+/* The bar layer ignores the pointer so the cells beneath stay clickable; the
+ * bars themselves opt back in. */
+.mg__bars {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.mg__bar {
+  position: absolute;
+  height: calc(var(--mg-lane-h) - 3px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+  border: none;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 16%, var(--salt));
+  color: var(--ink);
+  font-family: var(--font-ui);
+  padding: 0 5px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background 0.15s ease;
+}
+
+.mg__bar:hover {
+  background: color-mix(in srgb, var(--accent) 28%, var(--salt));
+}
+
+/* A cut end is drawn square and flush, so a bar that continues into the next
+ * week does not look like it stops there. */
+.mg__bar.continues-before {
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.mg__bar.continues-after {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.mg__bar-time {
+  font-size: 0.62rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  flex-shrink: 0;
+}
+
+.mg__bar-title {
+  font-size: 0.68rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mg__bar.is-done .mg__bar-title {
+  text-decoration: line-through;
+  color: var(--ink-2);
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .mg__cell:hover { background: var(--paper-1); }
+  .mg__cell.is-outside { background: var(--paper-1); }
+  .mg__bar { background: var(--paper-2); }
+  .mg__bar:hover { background: var(--sand); }
+  .mg__more:hover { background: var(--paper-2); }
+}
+
+/* ══ Year grid ════════════════════════════════════════════════════════
+ *
+ * Twelve months at a glance. Titles are unreadable at this size, so each day
+ * carries a density tint instead — a year view answers "when was I busy",
+ * not "what was it called".
+ */
+
+.yg {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  /* 280px lands on four columns at desktop width, so twelve months fill three
+   * rows exactly. Narrower minimums left a ragged last row (7+5, then 5+5+2),
+   * and a mini month wants the width anyway. */
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* Rows size to their content: stretching them to fill the pane opened a
+   * dead band between the two rows of months. */
+  align-content: start;
+  gap: 20px 18px;
+  padding: 16px;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--salt);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.yg__month { min-width: 0; }
+
+.yg__name {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.yg__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+}
+
+.yg__day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.yg__day.is-outside {
+  visibility: hidden;
+  cursor: default;
+}
+
+.yg__day.has-events {
+  background: color-mix(in srgb, var(--cherry) calc(var(--density) * 40%), transparent);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.yg__day:hover:not(.is-outside) {
+  background: color-mix(in srgb, var(--cherry) 22%, transparent);
+}
+
+.yg__day.is-today {
+  background: var(--cherry);
+  color: var(--salt);
+  font-weight: 700;
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .yg__day.has-events { background: var(--paper-2); }
+  .yg__day:hover:not(.is-outside) { background: var(--sand); }
+}
