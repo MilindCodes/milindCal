@@ -217,17 +217,21 @@ const TaskListItem = memo(function TaskListItem({
         <Check size={14} />
       </motion.button>
       <div className="task-body">
-        <p className={task.completed ? "completed" : ""}>{task.title}</p>
+        <p className={`task-title${task.completed ? " completed" : ""}`} title={task.title}>
+          {task.title}
+        </p>
         {task.description && (
           <p className="task-desc-preview">{task.description}</p>
         )}
         <div className="task-meta">
-          <span
-            className="task-importance-badge"
-            style={{ "--importance-color": IMPORTANCE_COLORS[task.importance ?? "medium"] } as React.CSSProperties}
-          >
-            <Flag size={9} /> {IMPORTANCE_LABELS[task.importance ?? "medium"]}
-          </span>
+          {(task.importance ?? "medium") !== "medium" && (
+            <span
+              className="task-importance-badge"
+              style={{ "--importance-color": IMPORTANCE_COLORS[task.importance ?? "medium"] } as React.CSSProperties}
+            >
+              <Flag size={9} /> {IMPORTANCE_LABELS[task.importance ?? "medium"]}
+            </span>
+          )}
           {task.dueDate && (
             <span className="task-due-badge">
               <Calendar size={9} /> {formatDue(task.dueDate)}

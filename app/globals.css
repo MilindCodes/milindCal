@@ -9123,3 +9123,19 @@ a.primary-button {
   .tg__event.is-done .milind-tile,
   .mg__bar.is-done .milind-tile { background: var(--paper-1); }
 }
+
+/* ── Task titles ─────────────────────────────────────────────────────
+ *
+ * Clamped to two lines. Unclamped, one long title ran to seven lines and made
+ * a single task as tall as three others, which is what stops a list being
+ * scannable. The full string stays in the DOM, so screen readers still read
+ * all of it, and `title` gives the rest on hover.
+ */
+.task-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
