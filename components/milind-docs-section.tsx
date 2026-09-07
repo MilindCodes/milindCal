@@ -344,9 +344,9 @@ export function MilindDocsSection({
               >
                 <div className="docs-empty-icon">
                   <svg width="48" height="56" viewBox="0 0 20 24" fill="none">
-                    <path d="M12 0H2C0.9 0 0 0.9 0 2v20c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8l-8-8z" fill="#e8f0fe" />
-                    <path d="M12 0v8h8L12 0z" fill="#c5d8fc" />
-                    <path d="M4 13h12v1.5H4V13zm0 3h12v1.5H4V16zm0 3h8v1.5H4V19z" fill="#4285f4" fillOpacity="0.5" />
+                    <path d="M12 0H2C0.9 0 0 0.9 0 2v20c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8l-8-8z" fill="currentColor" fillOpacity="0.14" />
+                    <path d="M12 0v8h8L12 0z" fill="currentColor" fillOpacity="0.26" />
+                    <path d="M4 13h12v1.5H4V13zm0 3h12v1.5H4V16zm0 3h8v1.5H4V19z" fill="currentColor" fillOpacity="0.5" />
                   </svg>
                 </div>
                 <p>No document selected</p>
