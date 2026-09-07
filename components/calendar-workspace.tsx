@@ -1,11 +1,8 @@
 "use client";
 
-import FullCalendar from "@fullcalendar/react";
-import interactionPlugin from "@fullcalendar/interaction";
-import dayGridPlugin from "@fullcalendar/daygrid";
-import multiMonthPlugin from "@fullcalendar/multimonth";
-import timeGridPlugin from "@fullcalendar/timegrid";
-import type { DateSelectArg, DatesSetArg, EventChangeArg, EventClickArg, EventContentArg, EventInput, MoreLinkArg } from "@fullcalendar/core";
+import { MonthGrid, YearGrid } from "@/components/calendar-grid/month-grid";
+import { TimeGrid, type GridEvent } from "@/components/calendar-grid/time-grid";
+import { addDays, startOfDay, weekDays } from "@/lib/calendar-grid";
 import { AnimatePresence, animate, motion, useMotionValue, useSpring, useTransform, LayoutGroup } from "framer-motion";
 import { AlertCircle, AlertTriangle, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, FileText, Layers, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -210,7 +207,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
    * a view FullCalendar does not know about. The saving measured at ~1kB
    * anyway, because the plugins share most of their weight with core, which
    * loads regardless. Keep them static. */
-  const calendarRef = useRef<FullCalendar | null>(null);
   const calendarFrameRef = useRef<HTMLDivElement | null>(null);
   const syncVersionRef = useRef(0);
   const readEventsAbortRef = useRef<AbortController | null>(null);
@@ -228,16 +224,35 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const [view, setView] = useState<CalendarView>("timeGridWeek");
   // Initialize to the current week so the first readEvents fetch matches
   // what FullCalendar renders, avoiding a redundant double-fetch on mount.
-  const [range, setRange] = useState<{ start: string; end: string }>(() => {
-    const now = new Date();
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - now.getDay()); // Sunday
-    weekStart.setHours(0, 0, 0, 0);
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 7);
-    return { start: weekStart.toISOString(), end: weekEnd.toISOString() };
-  });
-  const [calendarTitle, setCalendarTitle] = useState("");
+  /* The date the view is built around. FullCalendar used to own this and
+   * report it back through datesSet; now it is plain state, which means the
+   * visible window and the title are derived rather than announced. */
+  const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
+
+  /* What to fetch from Google. Month and year pull wider than they draw,
+   * because a month grid shows the tail of the previous month and the head of
+   * the next, and those days must not be empty. */
+  const range = useMemo(() => {
+    if (view === "dayGridMonth") {
+      const first = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
+      return {
+        start: addDays(startOfDay(first), -7).toISOString(),
+        end: addDays(new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 1), 7).toISOString(),
+      };
+    }
+    if (view === "multiMonthYear") {
+      return {
+        start: new Date(anchorDate.getFullYear(), 0, 1).toISOString(),
+        end: new Date(anchorDate.getFullYear() + 1, 0, 1).toISOString(),
+      };
+    }
+    if (view === "timeGridDay") {
+      const d = startOfDay(anchorDate);
+      return { start: d.toISOString(), end: addDays(d, 1).toISOString() };
+    }
+    const week = weekDays(anchorDate, 0);
+    return { start: week[0].toISOString(), end: addDays(week[6], 1).toISOString() };
+  }, [view, anchorDate]);
   const [navDirection, setNavDirection] = useState<"prev" | "next" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -246,7 +261,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   // Clear the FullCalendar drag-selection highlight when the editor is dismissed
   useEffect(() => {
     if (!eventEditorOpen) {
-      calendarRef.current?.getApi()?.unselect();
     }
   }, [eventEditorOpen]);
   const [calendarDialogOpen, setCalendarDialogOpen] = useState(false);
@@ -437,7 +451,11 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
       if (!docsVisible) {
         // ── CAL → DOCS: scroll-down past calendar ──
-        if (target.closest(".fc-scroller") || target.closest(".fc-timegrid-body")) return;
+        // Do not hijack the wheel over a region the calendar scrolls itself,
+        // or scrolling down the day would throw you into milindDocs instead.
+        // These are the grids that actually scroll; the month grid fills its
+        // pane, so a wheel there is genuinely a gesture.
+        if (target.closest(".tg__scroll") || target.closest(".yg")) return;
         if (e.deltaY > 0) {
           e.preventDefault();
           wheelAccRef.current = Math.min(wheelAccRef.current + e.deltaY * 0.55, SNAP_THRESHOLD * 1.25);
@@ -1101,11 +1119,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     [records],
   );
 
-  const fullCalendarEvents = useMemo<EventInput[]>(() => {
-    // FullCalendar's own background/border painting is switched off: a flat
-    // saturated block is loud and forces white-on-colour text that fails at
-    // small sizes. The tile renders its own tinted surface with a saturated
-    // rail and dark ink instead, and carries the accent through extendedProps.
+  const gridEvents = useMemo<GridEvent[]>(() => {
     // Events milindCal has adopted are rendered from their record below;
     // drawing Google's copy too would put two tiles in the same slot.
     const adopted = new Set(
@@ -1114,19 +1128,18 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         .map((t) => `${t.googleCalendarId}::${t.googleEventId}`),
     );
 
-    const out: EventInput[] = events
+    const out: GridEvent[] = events
       .filter((event) => !adopted.has(`${event.calendarId}::${event.id}`))
       .map((event) => ({
-      id: `${event.calendarId}::${event.id}`,
-      title: event.title,
-      start: event.start,
-      end: event.end,
-      allDay: event.allDay,
-      backgroundColor: "transparent",
-      borderColor: "transparent",
-      textColor: "inherit",
-      extendedProps: { accent: event.color || "#4f8cff" },
-    }));
+        id: `${event.calendarId}::${event.id}`,
+        title: event.title,
+        start: new Date(event.start),
+        // An event with no end is a point in time; give it an hour so it has
+        // something to draw. FullCalendar used to do this silently.
+        end: new Date(event.end || new Date(new Date(event.start).getTime() + 3600_000)),
+        allDay: event.allDay,
+        accent: event.color || "#4f8cff",
+      }));
 
     for (const task of scheduledRecords) {
       if (!task.start) continue;
@@ -1138,56 +1151,70 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
           ? events.find((e) => e.id === task.googleEventId)?.color
             ?? IMPORTANCE_EVENT_COLORS.medium
           : IMPORTANCE_EVENT_COLORS[task.importance] ?? IMPORTANCE_EVENT_COLORS.medium;
+      const start = new Date(task.start);
       out.push({
         id: `task:${task.id}`,
         title: task.title,
-        start: task.start,
-        end: task.end,
+        start,
+        end: new Date(task.end || start.getTime() + 3600_000),
         allDay: task.allDay ?? false,
-        backgroundColor: "transparent",
-        borderColor: "transparent",
-        textColor: "inherit",
-        classNames: task.completed ? ["fc-record-done"] : undefined,
-        extendedProps: { accent: color },
+        accent: color,
+        done: task.completed ?? false,
       });
     }
 
     return out;
   }, [events, tasks, scheduledRecords]);
 
+
+
   const changeView = useCallback((nextView: CalendarView) => {
     setView(nextView);
-    if (nextView !== "nodeCanvas" && nextView !== "sheet") {
-      calendarRef.current?.getApi().changeView(nextView);
-    }
   }, []);
 
-  const onDatesSet = useCallback((args: DatesSetArg) => {
-    setRange({
-      start: args.start.toISOString(),
-      end: args.end.toISOString()
-    });
-    setCalendarTitle(args.view.title);
-  }, []);
+  /** The days a time-grid view shows. Month and year derive their own. */
+  const gridDays = useMemo(
+    () => (view === "timeGridDay" ? [startOfDay(anchorDate)] : weekDays(anchorDate, 0)),
+    [view, anchorDate],
+  );
+
+
+
+  /* The heading. FullCalendar generated these strings; they are reproduced
+   * here so the toolbar reads the same as it did. */
+  const calendarTitle = useMemo(() => {
+    const y = anchorDate.getFullYear();
+    if (view === "multiMonthYear") return String(y);
+    if (view === "dayGridMonth") {
+      return anchorDate.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    }
+    if (view === "timeGridDay") {
+      return anchorDate.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+    }
+    const week = weekDays(anchorDate, 0);
+    const a = week[0];
+    const b = week[6];
+    const month = (d: Date) => d.toLocaleDateString(undefined, { month: "short" });
+    return a.getMonth() === b.getMonth()
+      ? `${month(a)} ${a.getDate()} – ${b.getDate()}, ${y}`
+      : `${month(a)} ${a.getDate()} – ${month(b)} ${b.getDate()}, ${b.getFullYear()}`;
+  }, [view, anchorDate]);
 
   const navigateCalendar = useCallback((action: "prev" | "next" | "today") => {
-    const api = calendarRef.current?.getApi();
-    if (!api) return;
-    if (action === "prev") {
-      setNavDirection("prev");
-      api.prev();
-    } else if (action === "next") {
-      setNavDirection("next");
-      api.next();
-    } else {
-      setNavDirection(null);
-      api.today();
-    }
+    setNavDirection(action === "today" ? null : action);
+    setAnchorDate((d) => {
+      if (action === "today") return new Date();
+      const step = action === "prev" ? -1 : 1;
+      if (view === "timeGridDay") return addDays(d, step);
+      if (view === "dayGridMonth") return new Date(d.getFullYear(), d.getMonth() + step, 1);
+      if (view === "multiMonthYear") return new Date(d.getFullYear() + step, 0, 1);
+      return addDays(d, 7 * step);
+    });
     // Clear direction after animation
     setTimeout(() => setNavDirection(null), 400);
-  }, []);
+  }, [view]);
 
-  const onSelectRange = useCallback((selection: DateSelectArg) => {
+  const onSelectRange = useCallback((selection: { startStr: string; endStr: string }) => {
     setEditingEvent(null);
     setDraftWindow({
       start: selection.startStr,
@@ -1205,7 +1232,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     setEventEditorOpen(true);
   }, []);
 
-  const onEventClick = (eventClick: EventClickArg) => {
+  const onEventClick = (eventClick: { event: { id: string } }) => {
     // Scheduled tasks live on the board, so surface them there rather than in
     // the Google event editor, which has no record to load.
     if (eventClick.event.id.startsWith("task:")) {
@@ -1240,46 +1267,28 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     setExpandedAnchorRect(null);
   }, []);
 
-  const onMoreLinkClick = useCallback((info: MoreLinkArg) => {
-    const dateStr = (info.date as Date).toISOString().split("T")[0];
-
+  /* The "+N more" affordance. The grid hands over the day and the cell it was
+   * clicked in, so the day's events are looked up here rather than unpacked
+   * from a calendar library's segment list. */
+  const onMoreLinkClick = useCallback((day: Date, anchorEl: HTMLElement | null) => {
+    const dateStr = day.toISOString().split("T")[0];
     if (expandedDate === dateStr) {
       closeExpandedDay();
-      return "none" as const;
+      return;
     }
+    if (anchorEl) setExpandedAnchorRect(anchorEl.getBoundingClientRect());
 
-    const target = info.jsEvent?.target as HTMLElement | null;
-    const dayEl = target?.closest(".fc-daygrid-day");
-    if (dayEl) {
-      setExpandedAnchorRect(dayEl.getBoundingClientRect());
-    }
-
-    const seen = new Set<string>();
-    const dayEvents = (info.allSegs as Array<{ event: { id: string } }>)
-      .map((seg) => {
-        const id = seg.event.id as string;
-        const sep = id.indexOf("::");
-        if (sep === -1) return null;
-        const calId = id.slice(0, sep);
-        const evId = id.slice(sep + 2);
-        return events.find((e) => e.id === evId && e.calendarId === calId) ?? null;
-      })
-      .filter((e): e is CalendarEvent => {
-        if (!e) return false;
-        const key = `${e.calendarId}::${e.id}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+    const dayStart = startOfDay(day).getTime();
+    const dayEnd = addDays(startOfDay(day), 1).getTime();
+    const dayEvents = events.filter((e) => {
+      const start = new Date(e.start).getTime();
+      const end = new Date(e.end || e.start).getTime();
+      return start < dayEnd && end > dayStart;
+    });
 
     setExpandedDate(dateStr);
     setExpandedDateEvents(dayEvents);
-    return "none";
   }, [expandedDate, events, closeExpandedDay]);
-
-  const moreLinkContent = useCallback((info: { num: number }) => {
-    return `${info.num}+ more`;
-  }, []);
 
   /* Calendar is a drop target for tasks / docs. The drop router picks the
    * time slot from target.data; we leave it undefined here so it defaults
@@ -1310,10 +1319,14 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     return map;
   }, [events]);
 
-  const renderEventContent = useCallback((arg: EventContentArg) => {
+  const renderEventContent = useCallback((arg: {
+    event: { id: string; title: string; allDay: boolean; extendedProps?: { accent?: string } };
+    timeText: string;
+    isStart: boolean;
+  }) => {
     // Scheduled tasks render with a completion checkbox instead of a drag
     // handle — same record as the board row, so it carries the same affordance.
-    const accent = (arg.event.extendedProps?.accent as string) || "#4f8cff";
+    const accent = arg.event.extendedProps?.accent || "#4f8cff";
 
     if (arg.event.id.startsWith("task:")) {
       const taskId = arg.event.id.slice("task:".length);
@@ -1361,6 +1374,53 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     );
   }, [eventsById, updateTask]);
 
+  /* Adapters between the grid's plain callbacks and the handlers above, which
+   * still speak the shape they were written against. */
+  const handleGridEventChange = useCallback(
+    (id: string, start: Date, end: Date) => {
+      const source = gridEvents.find((e) => e.id === id);
+      void updateMovedOrResizedEvent({
+        event: {
+          id,
+          startStr: start.toISOString(),
+          endStr: end.toISOString(),
+          allDay: source?.allDay ?? false,
+        },
+        revert: () => setError("Could not move that event — Google rejected the change"),
+      });
+    },
+    // updateMovedOrResizedEvent is redefined every render by design; it closes
+    // over live event state. Depending on it here would rebuild this on every
+    // render for no benefit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [gridEvents],
+  );
+
+  const handleGridCreate = useCallback((start: Date, end: Date) => {
+    onSelectRange({ startStr: start.toISOString(), endStr: end.toISOString() });
+  }, [onSelectRange]);
+
+  /** Render one tile through the existing tile renderer. */
+  const renderGridEvent = useCallback(
+    (ev: GridEvent) =>
+      renderEventContent({
+        event: {
+          id: ev.id,
+          title: ev.title,
+          allDay: ev.allDay ?? false,
+          extendedProps: { accent: ev.accent },
+        },
+        timeText: ev.allDay
+          ? ""
+          : ev.start.toLocaleTimeString(undefined, {
+              hour: "numeric",
+              minute: ev.start.getMinutes() ? "2-digit" : undefined,
+            }),
+        isStart: true,
+      }),
+    [renderEventContent],
+  );
+
   useEffect(() => {
     if (!expandedDate) return;
     const close = () => closeExpandedDay();
@@ -1405,7 +1465,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   // When the task board collapses, FullCalendar needs to re-measure its container
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      calendarRef.current?.getApi().updateSize();
     }, 320);
     return () => window.clearTimeout(timer);
   }, [taskBoardExpanded]);
@@ -1414,20 +1473,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   // visible .fc-event on every mousemove inside the calendar, which was
   // visibly janking pointer input on larger weeks. The cursor-trail dot alone
   // is enough of a cursor-tracking flourish.
-
-  const dayHeaderContent = useCallback((args: { date: Date; text: string; isToday: boolean }) => {
-    const { date, text, isToday } = args;
-    // Month/year view headers have no digit (e.g. "Sun", "Mon") — keep default
-    if (!/\d/.test(text)) return text;
-    const dayName = date.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
-    const dayNum = date.getDate();
-    return (
-      <div className="fc-day-header-custom">
-        <span className="fc-day-header-name">{dayName}</span>
-        <span className={isToday ? "fc-today-num-circle" : "fc-day-header-num"}>{dayNum}</span>
-      </div>
-    );
-  }, []);
 
   const saveEvent = async (payload: { calendarId: string; event: GoogleEventPayload; eventId?: string }) => {
     try {
@@ -1487,7 +1532,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     }
   };
 
-  const updateMovedOrResizedEvent = async (change: EventChangeArg) => {
+  const updateMovedOrResizedEvent = async (change: {
+    event: { id: string; startStr: string; endStr: string; allDay: boolean };
+    /* Called when the write fails. The grid renders from the store and never
+     * moved a Google tile optimistically, so there is no local change to roll
+     * back — this reports the failure instead of silently snapping back. */
+    revert: () => void;
+  }) => {
     // A scheduled task dragged or resized on the grid is still just a task:
     // write the new window back to the record. No Google round-trip, because
     // there is no separate event to keep in step.
@@ -1974,43 +2025,48 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
               style={{ height: "100%" }}
               transition={{ duration: 0.36 }}
             >
-              <FullCalendar
-                allDaySlot
-                dayHeaderContent={dayHeaderContent}
-                datesSet={onDatesSet}
-                dayMaxEvents={MONTH_DAY_EVENT_PREVIEW_LIMIT}
-                editable
-                eventClick={onEventClick}
-                eventDrop={(arg) => void updateMovedOrResizedEvent(arg)}
-                eventResize={(arg) => void updateMovedOrResizedEvent(arg)}
-                eventContent={renderEventContent}
-                events={fullCalendarEvents}
-                headerToolbar={false}
-                height={calendarHeight}
-                initialView="timeGridWeek"
-                moreLinkClick={onMoreLinkClick}
-                moreLinkContent={moreLinkContent}
-                nowIndicator
-                plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, multiMonthPlugin]}
-                ref={calendarRef}
-                scrollTime="06:30:00"
-                scrollTimeReset={false}
-                selectable
-                unselectAuto={false}
-                select={onSelectRange}
-                slotMaxTime="24:00:00"
-                slotMinTime="06:30:00"
-                slotDuration="00:15:00"
-                views={{
-                  dayGridMonth: {
-                    dayMaxEvents: MONTH_DAY_EVENT_PREVIEW_LIMIT
-                  },
-                  multiMonthYear: {
-                    dayMaxEvents: MONTH_DAY_EVENT_PREVIEW_LIMIT
+              {view === "dayGridMonth" ? (
+                <MonthGrid
+                  anchor={anchorDate}
+                  events={gridEvents}
+                  maxLanes={MONTH_DAY_EVENT_PREVIEW_LIMIT}
+                  onDayClick={(day) => {
+                    const at = new Date(day);
+                    at.setHours(9, 0, 0, 0);
+                    onSelectRange({
+                      startStr: at.toISOString(),
+                      endStr: new Date(at.getTime() + 3600_000).toISOString(),
+                    });
+                  }}
+                  onEventClick={(ev) => onEventClick({ event: { id: ev.id } })}
+                  onMoreClick={(day) => onMoreLinkClick(day, null)}
+                  renderEvent={renderGridEvent}
+                />
+              ) : view === "multiMonthYear" ? (
+                <YearGrid
+                  events={gridEvents}
+                  onDayClick={(day) => {
+                    setAnchorDate(day);
+                    changeView("timeGridDay");
+                  }}
+                  year={anchorDate.getFullYear()}
+                />
+              ) : (
+                <TimeGrid
+                  days={gridDays}
+                  events={gridEvents}
+                  onCreate={handleGridCreate}
+                  onEventChange={handleGridEventChange}
+                  onEventClick={(ev) => onEventClick({ event: { id: ev.id } })}
+                  onSlotClick={(start) =>
+                    onSelectRange({
+                      startStr: start.toISOString(),
+                      endStr: new Date(start.getTime() + 3600_000).toISOString(),
+                    })
                   }
-                }}
-                weekends
-              />
+                  renderEvent={renderGridEvent}
+                />
+              )}
             </motion.div>
             <AnimatePresence>
               {loading ? (

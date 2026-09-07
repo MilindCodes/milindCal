@@ -2266,40 +2266,6 @@ textarea {
   color: var(--muted);
   line-height: 1.45;
 }
-
-.fc {
-  --fc-border-color: rgba(127, 29, 29, 0.14);
-  --fc-today-bg-color: rgba(127, 29, 29, 0.06);
-  --fc-page-bg-color: transparent;
-  --fc-neutral-bg-color: transparent;
-  --fc-neutral-text-color: #1f1416;
-  --fc-list-event-hover-bg-color: rgba(127, 29, 29, 0.06);
-  font-family: var(--font-ui);
-  font-size: 0.85rem;
-  letter-spacing: 0.01em;
-}
-
-.fc .fc-toolbar-title {
-  font-size: 0.96rem;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: rgba(31, 20, 22, 0.7);
-}
-
-.fc .fc-button {
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(127, 29, 29, 0.25);
-  color: #1f1416;
-  box-shadow: none;
-  transition: all 0.2s ease;
-}
-
-.fc .fc-button:hover {
-  background: rgba(127, 29, 29, 0.12);
-  border-color: rgba(127, 29, 29, 0.5);
-}
-
 /* ------------------------------------------------------------------ */
 /*  Custom Calendar Navigation                                         */
 /* ------------------------------------------------------------------ */
@@ -2474,176 +2440,8 @@ textarea {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-
-.fc .fc-timegrid-slot,
-.fc .fc-scrollgrid,
-.fc .fc-col-header-cell,
-.fc .fc-daygrid-day {
-  background: transparent;
-}
-
-.fc .fc-event {
-  border: 0;
-  padding: 3px 8px;
-  border-radius: var(--radius-lg);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.05),
-    0 3px 10px rgba(0, 0, 0, 0.07),
-    inset 0 1px 0 rgba(255, 255, 255, 0.30);
-  transition:
-    box-shadow 0.18s ease,
-    filter 0.18s ease;
-  will-change: transform;
-  cursor: pointer;
-  backdrop-filter: blur(2px);
-}
-
-.fc .fc-event-title {
-  font-weight: 500;
-  font-size: 0.8rem;
-  line-height: 1.3;
-}
-
-.fc .fc-event-time {
-  font-size: 0.72rem;
-  font-weight: 300;
-  opacity: 0.78;
-  letter-spacing: 0.01em;
-}
-
-.fc .fc-event:hover {
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.08),
-    0 8px 22px rgba(127, 29, 29, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.38);
-  filter: saturate(1.06) brightness(1.03);
-}
-
 /* Custom day header */
-.fc-day-header-custom {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 5px 0 4px;
-  line-height: 1;
-}
-
-.fc-day-header-name {
-  font-size: 0.65rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  /* Measured 2.92:1 at 9.1px. Alpha-derived greys are the recurring cause of
-   * these: 0.45 over paper lands well under the 4.5 floor for text this
-   * small, and small uppercase is already harder to read. --muted is a solid
-   * token chosen to clear it. */
-  color: var(--muted);
-}
-
-.fc-day-header-num {
-  font-size: 0.88rem;
-  font-weight: 400;
-  color: rgba(31, 20, 22, 0.72);
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.fc-today-num-circle {
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: #fff;
-  background: var(--accent);
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 8px rgba(127, 29, 29, 0.35);
-  letter-spacing: 0;
-}
-
 /* Today number circle in month/daygrid view */
-.fc .fc-day-today .fc-daygrid-day-number {
-  background: var(--accent);
-  color: #fff;
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.8rem;
-  font-weight: 600;
-  margin: 2px;
-  box-shadow: 0 2px 6px rgba(127, 29, 29, 0.3);
-  text-decoration: none;
-}
-
-.fc .fc-daygrid-day,
-.fc .fc-timegrid-col {
-  transition: background 0.26s ease;
-}
-
-.fc .fc-daygrid-day:hover,
-.fc .fc-timegrid-col:hover {
-  background: rgba(127, 29, 29, 0.06);
-}
-
-.fc .fc-more-link {
-  color: rgba(127, 29, 29, 0.85);
-  font-size: 0.78rem;
-  font-weight: 600;
-  padding: 1px 4px;
-  border-radius: var(--radius-sm);
-  transition: background 0.18s ease, color 0.18s ease;
-}
-
-.fc .fc-more-link:hover {
-  background: rgba(127, 29, 29, 0.1);
-  color: rgba(127, 29, 29, 1);
-}
-
-.fc .fc-popover {
-  background: rgba(255, 250, 248, 0.97);
-  border: 1px solid rgba(127, 29, 29, 0.2);
-  border-radius: var(--radius-md);
-  box-shadow: 0 8px 28px rgba(127, 29, 29, 0.15);
-  backdrop-filter: blur(6px);
-}
-
-.fc .fc-popover-header {
-  background: rgba(127, 29, 29, 0.07);
-  border-bottom: 1px solid rgba(127, 29, 29, 0.12);
-  border-radius: 10px 10px 0 0;
-  padding: 6px 10px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: #1f1416;
-}
-
-.fc .fc-popover-close {
-  color: rgba(127, 29, 29, 0.6);
-  font-size: 1rem;
-  transition: color 0.18s ease;
-}
-
-.fc .fc-popover-close:hover {
-  color: rgba(127, 29, 29, 1);
-}
-
-.fc .fc-popover-body {
-  padding: 6px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
 .day-expand-backdrop {
   position: fixed;
   inset: 0;
@@ -4495,11 +4293,6 @@ textarea {
 }
 
 /* Highlight the drop slot when a task hovers over the calendar */
-.fc-highlight {
-  background: rgba(127, 29, 29, 0.1) !important;
-  border-radius: var(--radius-sm);
-}
-
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 /* Responsive: on small screens, make event popout full width from bottom */
@@ -6817,24 +6610,6 @@ textarea {
 }
 
 /* Calendar event drag handle — a tiny grip that appears on hover */
-.fc-event .universal-event-handle {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.32);
-  opacity: 0;
-  cursor: grab;
-  transition: opacity 0.15s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255, 255, 255, 0.9);
-  z-index: 5;
-}
-.fc-event:hover .universal-event-handle { opacity: 1; }
 .universal-event-handle:active { cursor: grabbing; }
 
 /* ─────────────── Calendar event tile (custom eventContent) ─────────────── */
@@ -8008,23 +7783,6 @@ a.primary-button {
  * meaning, but as a tint rather than a shout, and contrast no longer depends
  * on the accent's luminance.
  */
-
-.fc .fc-event,
-.fc .fc-event:hover,
-.fc .fc-daygrid-event,
-.fc .fc-timegrid-event {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  padding: 0 !important;
-}
-
-.fc .fc-timegrid-event,
-.fc .fc-daygrid-event {
-  /* Breathing room so adjacent tiles read as separate cards. */
-  margin: 1px 2px 1px 0;
-}
-
 .milind-tile {
   --tile-accent: #4f8cff;
   position: relative;
@@ -8053,11 +7811,6 @@ a.primary-button {
     border-left: 3px solid var(--tile-accent);
   }
 }
-
-.fc-event:hover .milind-tile {
-  background: color-mix(in srgb, var(--tile-accent) 20%, var(--salt));
-}
-
 .milind-tile__body {
   display: flex;
   flex-direction: column;
@@ -8095,13 +7848,6 @@ a.primary-button {
 
 /* Short tiles can't fit two lines plus a time — drop to one line and hide the
  * time rather than clipping mid-glyph. */
-.fc-timegrid-event-short .milind-tile__title {
-  -webkit-line-clamp: 1;
-}
-.fc-timegrid-event-short .milind-tile__time {
-  display: none;
-}
-
 /* ── Completion control on task tiles ── */
 
 .milind-tile__check {
@@ -8125,25 +7871,6 @@ a.primary-button {
   border-color: var(--tile-accent);
   background: color-mix(in srgb, var(--tile-accent) 22%, transparent);
 }
-
-.fc-record-done .milind-tile__check {
-  background: var(--tile-accent);
-  border-color: var(--tile-accent);
-}
-
-.fc-record-done .milind-tile {
-  background: color-mix(in srgb, var(--tile-accent) 7%, var(--salt));
-}
-
-.fc-record-done .milind-tile__title {
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
-  /* `--muted` measured 4.37:1 here — just under AA. The strikethrough already
-   * carries "done" unambiguously, so the colour doesn't need to do that work
-   * too; --ink-2 keeps it visibly secondary and legible. */
-  color: var(--ink-2);
-}
-
 /* ══ Task cards ═══════════════════════════════════════════════════════
  *
  * The card declares three grid columns but renders four children (toggle,
@@ -9361,4 +9088,38 @@ a.primary-button {
 @supports not (background: color-mix(in srgb, red 50%, blue)) {
   .yg__day.has-events { background: var(--paper-2); }
   .yg__day:hover:not(.is-outside) { background: var(--sand); }
+}
+
+/* ── Completed records on the grid ───────────────────────────────────
+ *
+ * These rules used to hang off .fc-record-done, a class FullCalendar applied.
+ * The grid marks the tile itself instead, but the treatment is unchanged: the
+ * checkbox fills with the record's accent, the surface flattens, and the title
+ * takes a strikethrough.
+ */
+
+.tg__event.is-done .milind-tile__check,
+.mg__bar.is-done .milind-tile__check {
+  background: var(--tile-accent);
+  border-color: var(--tile-accent);
+}
+
+.tg__event.is-done .milind-tile,
+.mg__bar.is-done .milind-tile {
+  background: color-mix(in srgb, var(--tile-accent) 7%, var(--salt));
+}
+
+.tg__event.is-done .milind-tile__title,
+.mg__bar.is-done .milind-tile__title {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  /* `--muted` measured 4.37:1 here — just under AA. The strikethrough already
+   * carries "done" unambiguously, so the colour doesn't need to do that work
+   * too; --ink-2 keeps it visibly secondary and legible. */
+  color: var(--ink-2);
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .tg__event.is-done .milind-tile,
+  .mg__bar.is-done .milind-tile { background: var(--paper-1); }
 }
