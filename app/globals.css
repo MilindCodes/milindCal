@@ -8611,6 +8611,75 @@ a.primary-button {
   margin-top: 8px;
 }
 
+/* Visually hidden but available to screen readers. Used for the sheet's
+ * selection announcer, which has no visible counterpart because the grid
+ * keeps focus on its container rather than on individual cells. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The "fx" marker earns the formula bar its identity: without it the bar reads
+ * as a title field, and users type prose into it. */
+.sheet__fx {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-style: italic;
+  font-weight: 600;
+  color: var(--muted);
+  padding-right: 2px;
+  border-right: 1px solid var(--line);
+  padding-left: 2px;
+  user-select: none;
+}
+
+/* The grid's last column rarely reaches the edge of the pane. This track
+ * carries the horizontal ruling the rest of the way, so the sheet reads as
+ * continuing into empty space rather than stopping mid-air. */
+.sheet__filler {
+  background: var(--salt);
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet__row--head .sheet__filler {
+  background: var(--paper-2);
+}
+
+/* Crosshair. Tracing a cell back to its headers across a wide grid otherwise
+ * means counting columns; this makes the row and column of the selection
+ * legible at a glance without competing with the selection ring itself. */
+.sheet__cell.is-axis {
+  background: color-mix(in srgb, var(--cherry) 3%, var(--salt));
+}
+
+.sheet__cell:not(.is-selected):hover {
+  background: color-mix(in srgb, var(--cherry) 6%, var(--salt));
+}
+
+/* The selection reads as a drawn ring rather than a tint: two inset pixels of
+ * cherry plus a soft outer glow, so it stays findable on a dense grid without
+ * darkening the cell's own contents. */
+.sheet__cell.is-selected {
+  background: var(--salt);
+  box-shadow:
+    inset 0 0 0 2px var(--cherry),
+    0 0 0 3px color-mix(in srgb, var(--cherry) 14%, transparent);
+  z-index: 1;
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .sheet__cell.is-axis { background: var(--paper-1); }
+  .sheet__cell:not(.is-selected):hover { background: var(--paper-1); }
+  .sheet__cell.is-selected { box-shadow: inset 0 0 0 2px var(--cherry); }
+}
+
 /* ══ milindDocs selection bubble ══════════════════════════════════════
  *
  * Character formatting under the cursor rather than at the window edge. Dark
