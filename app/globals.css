@@ -8909,3 +8909,56 @@ a.primary-button {
   overflow: hidden;
   overflow-wrap: anywhere;
 }
+
+/* ── Sheet column resizing ───────────────────────────────────────────
+ *
+ * SheetData carried colWidths from the start but nothing could set it, so
+ * every column was stuck at one width. The grip is a hit area on the column
+ * header's right edge; it only shows itself on hover so the header stays
+ * quiet, and a double-click restores the default.
+ */
+
+.sheet__colhead {
+  position: relative;
+}
+
+.sheet__colresize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+  /* Touch drags must size the column rather than scroll the grid under it. */
+  touch-action: none;
+}
+
+.sheet__colresize::after {
+  content: "";
+  position: absolute;
+  top: 15%;
+  bottom: 15%;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.sheet__colhead:hover .sheet__colresize::after {
+  background: color-mix(in srgb, var(--cherry) 45%, transparent);
+}
+
+/* While dragging, the rule runs the full height of the header and stays lit,
+ * so it is clear which column is being sized. */
+.sheet__colhead.is-resizing .sheet__colresize::after,
+.sheet__colresize:active::after {
+  top: 0;
+  bottom: 0;
+  background: var(--cherry);
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .sheet__colhead:hover .sheet__colresize::after { background: var(--sand); }
+}

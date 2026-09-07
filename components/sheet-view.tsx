@@ -30,6 +30,9 @@ interface SheetViewProps {
 }
 
 const DEFAULT_COL_WIDTH = 108;
+/** Narrow enough to tuck a column away, wide enough to still grab its edge. */
+const MIN_COL_WIDTH = 44;
+const MAX_COL_WIDTH = 640;
 const ROW_HEIGHT = 28;
 const HEADER_W = 44;
 
@@ -42,6 +45,15 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const gridRef = useRef<HTMLDivElement>(null);
+  /* Column resizing. SheetData has carried colWidths from the start but
+   * nothing could ever set it, so every sheet was stuck at one width for
+   * every column — unusable for anything with a long label in it.
+   *
+   * The drag is held in a ref and mirrored into state: the ref is what the
+   * pointer handlers read (they are attached once and would otherwise close
+   * over a stale value), the state is what re-renders the grid. */
+  const resizeRef = useRef<{ col: number; startX: number; startWidth: number } | null>(null);
+  const [resizing, setResizing] = useState<{ col: number; width: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const activeRef = cellRef(sel.row, sel.col);
@@ -65,8 +77,11 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
   const formulaValue = formulaEdit?.ref === activeRef ? formulaEdit.text : rawActive;
 
   const colWidth = useCallback(
-    (c: number) => data.colWidths?.[c] ?? DEFAULT_COL_WIDTH,
-    [data.colWidths],
+    // While dragging, the live width comes from the gesture rather than the
+    // record, so the column follows the pointer without a write per pixel.
+    (c: number) =>
+      resizing?.col === c ? resizing.width : data.colWidths?.[c] ?? DEFAULT_COL_WIDTH,
+    [data.colWidths, resizing],
   );
 
   /** Write one cell. Empty input deletes the key so the map stays sparse. */
@@ -110,6 +125,41 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
   useEffect(() => {
     if (editing) inputRef.current?.focus();
   }, [editing]);
+
+  /* One write on release, not one per pointer move: each write rewrites the
+   * localStorage mirror and PATCHes the whole sheet to milindDrive, which is
+   * the same trap the formula bar was in. */
+  useEffect(() => {
+    if (!resizing) return;
+    const onMove = (e: PointerEvent) => {
+      const r = resizeRef.current;
+      if (!r) return;
+      const next = Math.round(
+        Math.min(MAX_COL_WIDTH, Math.max(MIN_COL_WIDTH, r.startWidth + (e.clientX - r.startX))),
+      );
+      setResizing({ col: r.col, width: next });
+    };
+    const onUp = () => {
+      const r = resizeRef.current;
+      const live = resizing;
+      resizeRef.current = null;
+      setResizing(null);
+      if (!r || !live) return;
+      const widths = { ...(data.colWidths ?? {}) };
+      if (live.width === DEFAULT_COL_WIDTH) delete widths[r.col];
+      else widths[r.col] = live.width;
+      onChange({ ...data, colWidths: widths });
+    };
+    const onCancel = () => { resizeRef.current = null; setResizing(null); };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  }, [resizing, data, onChange]);
 
   /* ── Grid keyboard model ──────────────────────────────────────────
    * Handled on the grid container rather than per-cell so arrow keys work
@@ -235,11 +285,34 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
           {cols.map((c) => (
             <div
               aria-colindex={c + 1}
-              className={`sheet__colhead${c === sel.col ? " is-active" : ""}`}
+              className={
+                `sheet__colhead${c === sel.col ? " is-active" : ""}` +
+                (resizing?.col === c ? " is-resizing" : "")
+              }
               key={c}
               role="columnheader"
             >
               {columnName(c)}
+              {/* Grabbing the right edge sizes the column. Double-clicking it
+                * returns the column to the default, which is the only way back
+                * from a width dragged to the minimum. */}
+              <span
+                aria-hidden="true"
+                className="sheet__colresize"
+                onDoubleClick={() => {
+                  const widths = { ...(data.colWidths ?? {}) };
+                  delete widths[c];
+                  onChange({ ...data, colWidths: widths });
+                }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const startWidth = data.colWidths?.[c] ?? DEFAULT_COL_WIDTH;
+                  resizeRef.current = { col: c, startX: e.clientX, startWidth };
+                  setResizing({ col: c, width: startWidth });
+                }}
+              />
             </div>
           ))}
           <div className="sheet__filler" />
