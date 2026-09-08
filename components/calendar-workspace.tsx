@@ -2,7 +2,7 @@
 
 import { MonthGrid, YearGrid } from "@/components/calendar-grid/month-grid";
 import { TimeGrid, type GridEvent } from "@/components/calendar-grid/time-grid";
-import { addDays, startOfDay, weekDays } from "@/lib/calendar-grid";
+import { DEFAULT_AXIS, addDays, monthWeeks, pointToDay, pointToSlot, startOfDay, weekDays } from "@/lib/calendar-grid";
 import { AnimatePresence, animate, motion, useMotionValue, useSpring, useTransform, LayoutGroup } from "framer-motion";
 import { AlertCircle, AlertTriangle, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, FileText, Layers, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -646,7 +646,44 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
   const handleUniversalDrop = useCallback(
     (evt: UniversalDropEvent) => {
-      const { source, target } = evt;
+      const { source, target, point } = evt;
+
+      /* Where on the calendar the drop landed.
+       *
+       * The calendar is one drop zone, so dnd-kit can only say "the calendar".
+       * Turning the release point into a day and an hour is what makes
+       * dragging a task onto Thursday afternoon schedule it for Thursday
+       * afternoon, rather than for whenever the drop happened to occur —
+       * which is what it did while FullCalendar owned the grid.
+       *
+       * Falls back to now + 1h when there is no point to read: a keyboard
+       * drag, or a drop on a view with no time axis at all. */
+      const slotFromPoint = (): { start: string; end: string } | null => {
+        if (!point) return null;
+        if (view === "dayGridMonth") {
+          const body = document.querySelector(".mg__body");
+          if (!body) return null;
+          const day = pointToDay(point, body.getBoundingClientRect(), monthWeeks(anchorDate, 0));
+          if (!day) return null;
+          // A month cell has no hour, so give it the start of the working day.
+          const start = new Date(day);
+          start.setHours(9, 0, 0, 0);
+          return { start: start.toISOString(), end: new Date(start.getTime() + 3600_000).toISOString() };
+        }
+        const body = document.querySelector(".tg__body");
+        if (!body) return null;
+        const gutter = Number.parseFloat(
+          getComputedStyle(body).gridTemplateColumns.split(" ")[0],
+        );
+        const slot = pointToSlot(
+          point,
+          body.getBoundingClientRect(),
+          gridDays,
+          DEFAULT_AXIS,
+          { gutter: Number.isFinite(gutter) ? gutter : 56 },
+        );
+        return slot ? { start: slot.start.toISOString(), end: slot.end.toISOString() } : null;
+      };
       const sourceKey: EntityKey = source.kind === "event" && source.calendarId
         ? eventKey(source.calendarId, source.id)
         : entityKey(source.kind, source.id);
@@ -665,12 +702,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
        * drifted: renaming the event left the task's title stale, completing the
        * task left the event behind. */
       if (source.kind === "task" && target.targetKind === "event") {
+        const dropped = slotFromPoint();
         const slotStart = typeof target.data?.start === "string"
           ? target.data.start as string
-          : new Date().toISOString();
+          : dropped?.start ?? new Date().toISOString();
         const slotEnd = typeof target.data?.end === "string"
           ? target.data.end as string
-          : new Date(new Date(slotStart).getTime() + 60 * 60 * 1000).toISOString();
+          : dropped?.end ?? new Date(new Date(slotStart).getTime() + 60 * 60 * 1000).toISOString();
         const allDay = target.data?.allDay === true;
 
         updateTask(source.id, { start: slotStart, end: slotEnd, allDay });
@@ -682,12 +720,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         docPendingTitleRef.current = source.label || "Untitled";
         docPendingDescriptionRef.current = source.description ?? "";
         setEditingEvent(null);
+        const dropped = slotFromPoint();
         const slotStart = typeof target.data?.start === "string"
           ? target.data.start as string
-          : new Date().toISOString();
+          : dropped?.start ?? new Date().toISOString();
         const slotEnd = typeof target.data?.end === "string"
           ? target.data.end as string
-          : new Date(new Date(slotStart).getTime() + 60 * 60 * 1000).toISOString();
+          : dropped?.end ?? new Date(new Date(slotStart).getTime() + 60 * 60 * 1000).toISOString();
         setDraftWindow({ start: slotStart, end: slotEnd });
         setEditorEntranceFrom("doc");
         setEventEditorOpen(true);

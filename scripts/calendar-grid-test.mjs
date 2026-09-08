@@ -17,6 +17,8 @@ import {
   layoutMonthWeek,
   monthWeeks,
   parseTime,
+  pointToDay,
+  pointToSlot,
   resolveDrag,
   sameDay,
   startOfDay,
@@ -430,6 +432,65 @@ const at = (id, from, to, day = "2026-03-10") => ({
      capMonthWeek(many, 10).hiddenPerDay.every((n) => n === 0), true);
 
   eq("an empty week lays out to nothing", layoutMonthWeek([], week).length, 0);
+}
+
+/* ── Dropping onto the grid ───────────────────────────────────────── */
+
+{
+  const days = weekDays(new Date("2026-03-10T00:00:00"), 0); // Sun 8 .. Sat 14
+  // 700px of days after a 56px gutter: 100px per day. 1050 minutes over 700px.
+  const rect = { left: 0, top: 0, width: 756, height: 700 };
+  const opts = { gutter: 56 };
+  const hhmm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+
+  const first = pointToSlot({ x: 56 + 50, y: 0 }, rect, days, DEFAULT_AXIS, opts);
+  eq("the left-most column is the first day", first.dayIndex, 0);
+  eq("the top of the grid is the axis start", hhmm(first.start), "06:30");
+
+  const third = pointToSlot({ x: 56 + 250, y: 0 }, rect, days, DEFAULT_AXIS, opts);
+  eq("x picks the day column", third.dayIndex, 2);
+
+  const last = pointToSlot({ x: 56 + 650, y: 0 }, rect, days, DEFAULT_AXIS, opts);
+  eq("the right-most column is the last day", last.dayIndex, 6);
+
+  // Half way down 1050 minutes from 06:30 is 00:05 the next... no: 390 + 525
+  // = 915 minutes = 15:15.
+  const mid = pointToSlot({ x: 56 + 50, y: 350 }, rect, days, DEFAULT_AXIS, opts);
+  eq("y picks the time", hhmm(mid.start), "15:15");
+  eq("a dropped item lands on the day it was dropped on", mid.start.getDate(), days[0].getDate());
+
+  // Default duration is an hour.
+  eq("the slot is an hour long", (mid.end - mid.start) / 60000, 60);
+  const long = pointToSlot({ x: 56 + 50, y: 350 }, rect, days, DEFAULT_AXIS, { ...opts, durationMinutes: 30 });
+  eq("the duration is configurable", (long.end - long.start) / 60000, 30);
+
+  // Snapping.
+  const snapped = pointToSlot({ x: 56 + 50, y: 353 }, rect, days, DEFAULT_AXIS, opts);
+  eq("the time snaps to the slot grid", Number(hhmm(snapped.start).slice(3)) % 15, 0);
+
+  // The gutter is not a day.
+  eq("a point over the hour gutter is not a slot", pointToSlot({ x: 20, y: 300 }, rect, days, DEFAULT_AXIS, opts), null);
+  eq("a point left of the grid is not a slot", pointToSlot({ x: -10, y: 300 }, rect, days, DEFAULT_AXIS, opts), null);
+  eq("a point right of the grid is not a slot", pointToSlot({ x: 900, y: 300 }, rect, days, DEFAULT_AXIS, opts), null);
+  eq("a point above the grid is not a slot", pointToSlot({ x: 200, y: -5 }, rect, days, DEFAULT_AXIS, opts), null);
+  eq("a point below the grid is not a slot", pointToSlot({ x: 200, y: 800 }, rect, days, DEFAULT_AXIS, opts), null);
+  eq("no days means no slot", pointToSlot({ x: 200, y: 300 }, rect, [], DEFAULT_AXIS, opts), null);
+
+  // Dropping at the very bottom must not start the event past the axis.
+  const bottom = pointToSlot({ x: 56 + 50, y: 700 }, rect, days, DEFAULT_AXIS, opts);
+  eq("a drop at the bottom still starts inside the axis",
+     bottom.start.getHours() * 60 + bottom.start.getMinutes() <= 1440 - 15, true);
+
+  // Month grid: a point identifies a day only.
+  const weeks = monthWeeks(new Date("2026-03-10T00:00:00"), 0);
+  const cell = pointToDay({ x: 350, y: 250 }, { left: 0, top: 0, width: 700, height: 600 }, weeks);
+  eq("a month point lands on a real date", cell instanceof Date, true);
+  eq("a month point lands at midnight", cell.getHours(), 0);
+  eq("the top-left month cell is the first day of the grid",
+     pointToDay({ x: 10, y: 10 }, { left: 0, top: 0, width: 700, height: 600 }, weeks).getTime(),
+     weeks[0][0].getTime());
+  eq("a point outside the month grid is nothing",
+     pointToDay({ x: -5, y: 10 }, { left: 0, top: 0, width: 700, height: 600 }, weeks), null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

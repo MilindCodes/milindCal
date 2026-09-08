@@ -57,6 +57,12 @@ export interface DropZoneMeta {
 export interface UniversalDropEvent {
   source: UniversalDragPayload;
   target: DropZoneMeta;
+  /** Where the pointer was released, in client coordinates.
+   *
+   *  A drop zone the size of a whole calendar can only say "the calendar";
+   *  the point is what lets the router say "Thursday at 2pm". Absent when the
+   *  drag was started by a keyboard, which has no pointer. */
+  point?: { x: number; y: number };
 }
 
 /* ──────────────────────────────────────────────────────────────── */
@@ -170,7 +176,15 @@ export function UniversalDragLayer({ children, onDrop }: UniversalDragLayerProps
       const source = e.active.data.current?.payload as UniversalDragPayload | undefined;
       const target = e.over?.data.current?.zone as DropZoneMeta | undefined;
       if (!source || !target) return;
-      onDropRef.current({ source, target });
+      // dnd-kit reports where the gesture began and how far it travelled; the
+      // sum is where it was released. Keyboard drags have no activator
+      // coordinates, and the router falls back for those.
+      const activator = e.activatorEvent as { clientX?: number; clientY?: number } | null;
+      const point =
+        activator && typeof activator.clientX === "number" && typeof activator.clientY === "number"
+          ? { x: activator.clientX + e.delta.x, y: activator.clientY + e.delta.y }
+          : undefined;
+      onDropRef.current({ source, target, point });
     },
     [],
   );

@@ -479,3 +479,68 @@ export function capMonthWeek<T extends LaidOutInput>(
   }
   return { visible, hiddenPerDay };
 }
+
+/* ── Pointer to slot ──────────────────────────────────────────────── */
+
+export interface Rect { left: number; top: number; width: number; height: number }
+
+/**
+ * Which day and time a point over the grid falls on.
+ *
+ * This is what lets a task dropped on Thursday afternoon land on Thursday
+ * afternoon. Kept here, away from the DOM, so the arithmetic can be tested
+ * directly — the caller measures one rect and passes it in.
+ *
+ * `gutter` is the width of the hour column on the left, which is not part of
+ * any day. A point over it, or outside the rect, returns null rather than
+ * guessing at the nearest day: dropping on the ruler is not a request to
+ * schedule anything.
+ */
+export function pointToSlot(
+  point: { x: number; y: number },
+  rect: Rect,
+  days: readonly Date[],
+  axis: TimeAxis = DEFAULT_AXIS,
+  options: { gutter?: number; snapMinutes?: number; durationMinutes?: number } = {},
+): { start: Date; end: Date; dayIndex: number } | null {
+  const { gutter = 0, snapMinutes = axis.slotMinutes, durationMinutes = 60 } = options;
+  if (days.length === 0 || rect.width <= gutter || rect.height <= 0) return null;
+  if (point.x < rect.left + gutter || point.x > rect.left + rect.width) return null;
+  if (point.y < rect.top || point.y > rect.top + rect.height) return null;
+
+  const columnWidth = (rect.width - gutter) / days.length;
+  const dayIndex = Math.min(
+    days.length - 1,
+    Math.max(0, Math.floor((point.x - rect.left - gutter) / columnWidth)),
+  );
+
+  const fraction = (point.y - rect.top) / rect.height;
+  const raw = axis.minMinutes + fraction * (axis.maxMinutes - axis.minMinutes);
+  const snapped = Math.round(raw / snapMinutes) * snapMinutes;
+  // Keep the whole event on the axis rather than starting it past the bottom.
+  const startMinutes = Math.min(Math.max(snapped, axis.minMinutes), axis.maxMinutes - snapMinutes);
+
+  const start = startOfDay(days[dayIndex]);
+  start.setMinutes(startMinutes);
+  return { start, end: new Date(start.getTime() + durationMinutes * 60_000), dayIndex };
+}
+
+/**
+ * The same question for a month grid, where a point only identifies a day.
+ *
+ * Returns midnight on that day; the caller decides what time to give it, since
+ * a month cell carries no hour.
+ */
+export function pointToDay(
+  point: { x: number; y: number },
+  rect: Rect,
+  weeks: readonly (readonly Date[])[],
+): Date | null {
+  if (weeks.length === 0 || rect.width <= 0 || rect.height <= 0) return null;
+  if (point.x < rect.left || point.x > rect.left + rect.width) return null;
+  if (point.y < rect.top || point.y > rect.top + rect.height) return null;
+  const row = Math.min(weeks.length - 1, Math.floor(((point.y - rect.top) / rect.height) * weeks.length));
+  const cols = weeks[row].length;
+  const col = Math.min(cols - 1, Math.floor(((point.x - rect.left) / rect.width) * cols));
+  return startOfDay(weeks[row][col]);
+}
