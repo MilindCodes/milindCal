@@ -22,6 +22,7 @@ import { useGridDrag } from "./use-grid-drag";
 import { useNow } from "./use-now";
 import {
   DEFAULT_AXIS,
+  eventLabel,
   addDays,
   bucketByDay,
   fractionOf,
@@ -215,6 +216,7 @@ export function TimeGrid({
             <div className="tg__allday-cell" key={days[i].toISOString()}>
               {row.map((ev) => (
                 <button
+                  aria-label={eventLabel(ev)}
                   className="tg__chip"
                   key={ev.id}
                   onClick={() => onEventClick?.(ev)}
@@ -278,6 +280,7 @@ export function TimeGrid({
             >
               {laidOut[i].map((slot) => (
                 <button
+                  aria-label={eventLabel(slot.event)}
                   className={
                     "tg__event" +
                     (slot.event.done ? " is-done" : "") +

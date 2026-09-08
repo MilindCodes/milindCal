@@ -6,6 +6,7 @@
  */
 
 import {
+  eventLabel,
   DEFAULT_AXIS,
   addDays,
   axisSlots,
@@ -491,6 +492,54 @@ const at = (id, from, to, day = "2026-03-10") => ({
      weeks[0][0].getTime());
   eq("a point outside the month grid is nothing",
      pointToDay({ x: -5, y: 10 }, { left: 0, top: 0, width: 700, height: 600 }, weeks), null);
+}
+
+/* ── How an event is announced ────────────────────────────────────── */
+
+/**
+ * Exact strings would pin the test to one locale, and the label is built from
+ * `toLocale*String` precisely so it does not have one. So these assert on
+ * structure: what has to be in there, and what must not be.
+ */
+{
+  const at = (h, m2) => { const d = new Date(2026, 8, 7); d.setHours(h, m2, 0, 0); return d; };
+
+  const timed = eventLabel({ title: "Design review", start: at(9, 0), end: at(12, 0) });
+  check("a timed event names itself first", timed.startsWith("Design review, "));
+  check("a timed event carries a start and an end", timed.includes(" to "));
+  check("a timed event names its day", /September/.test(timed));
+  check("a timed event does not claim to be all day", !timed.includes("all day"));
+
+  const allDay = eventLabel({
+    title: "Conference", allDay: true,
+    start: new Date(2026, 8, 7), end: new Date(2026, 8, 7),
+  });
+  check("an all-day event says so", allDay.includes("all day"));
+  check("an all-day event states no times", !/\d:\d\d/.test(allDay));
+  check("a one-day all-day event names its day once",
+        allDay.split("September").length - 1 === 1);
+
+  const span = eventLabel({
+    title: "Conference", allDay: true,
+    start: new Date(2026, 8, 7), end: new Date(2026, 8, 9),
+  });
+  check("a multi-day all-day event names both ends",
+        span.split("September").length - 1 === 2);
+
+  // Crossing midnight is the case where an end time alone is ambiguous.
+  const overnight = eventLabel({
+    title: "Deploy window", start: at(22, 0), end: new Date(2026, 8, 8, 2, 0),
+  });
+  check("an overnight event names both dates",
+        overnight.split("September").length - 1 === 2);
+
+  const done = eventLabel({ title: "Ship it", start: at(9, 0), end: at(10, 0), done: true });
+  check("a completed event says so", done.endsWith("completed"));
+  check("an unfinished one does not",
+        !eventLabel({ title: "Ship it", start: at(9, 0), end: at(10, 0) }).includes("completed"));
+
+  eq("an untitled event is still announceable",
+     eventLabel({ title: "   ", start: at(9, 0), end: at(10, 0) }).startsWith("Untitled"), true);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

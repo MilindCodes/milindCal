@@ -17,6 +17,7 @@ import { useMemo, type ReactNode } from "react";
 import { useNow } from "./use-now";
 import {
   capMonthWeek,
+  eventLabel,
   layoutMonthWeek,
   monthWeeks,
   sameDay,
@@ -126,6 +127,7 @@ export function MonthGrid({
             <div className="mg__bars">
               {visible.map((seg) => (
                 <button
+                  aria-label={eventLabel(seg.event)}
                   className={
                     "mg__bar" +
                     (seg.event.done ? " is-done" : "") +

@@ -544,3 +544,50 @@ export function pointToDay(
   const col = Math.min(cols - 1, Math.floor(((point.x - rect.left) / rect.width) * cols));
   return startOfDay(weeks[row][col]);
 }
+
+/* ── Announcing an event ──────────────────────────────────────────── */
+
+/**
+ * How an event should be read aloud.
+ *
+ * A calendar's entire content is *when*. The event tiles are real buttons, so
+ * they are reachable and openable from the keyboard already — but their
+ * accessible name came from their visible text, which is the title and, if it
+ * fits, a start time. A screen reader announced "Design review, button" and a
+ * week of them sounded like an unordered list of nouns.
+ *
+ * Built from `toLocale*String` rather than a fixed format so it follows the
+ * reader's own conventions, the same way every other date the app renders
+ * does. Times are omitted for all-day events because there are none, and the
+ * end date is named only when it differs from the start — "Tuesday to Tuesday"
+ * is noise.
+ */
+export function eventLabel(ev: {
+  title: string;
+  start: Date;
+  end: Date;
+  allDay?: boolean;
+  done?: boolean;
+}): string {
+  const day = (d: Date) =>
+    d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const time = (d: Date) =>
+    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+  const title = ev.title.trim() || "Untitled";
+  const parts: string[] = [title];
+
+  if (ev.allDay) {
+    parts.push("all day");
+    parts.push(sameDay(ev.start, ev.end) ? day(ev.start) : `${day(ev.start)} to ${day(ev.end)}`);
+  } else if (sameDay(ev.start, ev.end)) {
+    parts.push(`${time(ev.start)} to ${time(ev.end)}`);
+    parts.push(day(ev.start));
+  } else {
+    // Crosses midnight: the end date matters as much as the end time.
+    parts.push(`${day(ev.start)} ${time(ev.start)} to ${day(ev.end)} ${time(ev.end)}`);
+  }
+
+  if (ev.done) parts.push("completed");
+  return parts.join(", ");
+}
