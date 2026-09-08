@@ -8,6 +8,7 @@
  */
 
 import {
+  EMPTY_HISTORY,
   clearRange,
   normalizeRange,
   parseTSV,
@@ -17,6 +18,9 @@ import {
   rangeSize,
   rangeToRaw,
   rangeToTSV,
+  pushHistory,
+  redoHistory,
+  undoHistory,
 } from "../lib/sheet.ts";
 
 let passed = 0;
@@ -103,6 +107,55 @@ const cells = { A1: "1", B1: "2", A2: "3", B2: "=A2*2", C3: "text" };
   eq("clearRange leaves cells outside alone", cleared.C3, "text");
   eq("clearRange does not mutate the original", cells.A1, "1");
   eq("clearing an already-empty range is a no-op", Object.keys(clearRange({}, { r0: 0, c0: 0, r1: 3, c1: 3 })).length, 0);
+}
+
+/* ── Undo history ─────────────────────────────────────────────────── */
+
+{
+  const h0 = EMPTY_HISTORY;
+  eq("nothing to undo at the start", undoHistory(h0, "b"), null);
+  eq("nothing to redo at the start", redoHistory(h0, "b"), null);
+
+  // a -> b -> c
+  const h1 = pushHistory(h0, "a");
+  const h2 = pushHistory(h1, "b");
+  eq("history records what was replaced", h2.past.join(","), "a,b");
+
+  const u1 = undoHistory(h2, "c");
+  eq("undo returns the previous state", u1.value, "b");
+  eq("undo moves the present into the future", u1.history.future.join(","), "c");
+  const u2 = undoHistory(u1.history, u1.value);
+  eq("a second undo goes back further", u2.value, "a");
+  eq("the future stacks in order", u2.history.future.join(","), "b,c");
+  eq("undo stops at the beginning", undoHistory(u2.history, u2.value), null);
+
+  // Redo walks back out again.
+  const r1 = redoHistory(u2.history, u2.value);
+  eq("redo returns the state undone out of", r1.value, "b");
+  const r2 = redoHistory(r1.history, r1.value);
+  eq("redo continues forward", r2.value, "c");
+  eq("redo stops at the end", redoHistory(r2.history, r2.value), null);
+
+  // A fresh edit after undoing forks the timeline: the abandoned branch is
+  // gone, which is what every editor does and what users expect.
+  const forked = pushHistory(u2.history, "a");
+  eq("editing after undo drops the redo branch", forked.future.length, 0);
+  eq("and still records the edit", forked.past.length, u2.history.past.length + 1);
+
+  // Bounded, because each entry is a whole cell map.
+  let big = EMPTY_HISTORY;
+  for (let i = 0; i < 10; i++) big = pushHistory(big, "s" + i, 4);
+  eq("history is capped", big.past.length, 4);
+  eq("the cap drops the oldest, not the newest", big.past.join(","), "s6,s7,s8,s9");
+
+  // Immutability: callers hold on to old history objects.
+  const before = pushHistory(EMPTY_HISTORY, "x");
+  const after = pushHistory(before, "y");
+  eq("pushHistory does not mutate its input", before.past.join(","), "x");
+  eq("and returns a new history", after.past.join(","), "x,y");
+  const uu = undoHistory(after, "z");
+  eq("undoHistory does not mutate its input", after.past.join(","), "x,y");
+  eq("undo leaves the caller a fresh history", uu.history.past.join(","), "x");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

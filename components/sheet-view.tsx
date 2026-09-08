@@ -21,6 +21,7 @@ import {
   clearRange,
   columnName,
   evaluateCell,
+  EMPTY_HISTORY,
   normalizeRange,
   parseTSV,
   pasteAt,
@@ -28,6 +29,10 @@ import {
   rangeSize,
   rangeToRaw,
   rangeToTSV,
+  pushHistory,
+  redoHistory,
+  undoHistory,
+  type History,
   type SheetData,
 } from "@/lib/sheet";
 
@@ -70,6 +75,14 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
    * text we wrote lets a paste recognise its own copy and restore formulas,
    * while a paste from anywhere else still works as plain values. */
   const clipRef = useRef<{ text: string; raw: string[][] } | null>(null);
+  /* Undo history. Kept in a ref rather than state because nothing renders
+   * from it directly, and a re-render per keystroke to store a snapshot
+   * nobody looks at is wasted work.
+   *
+   * Snapshots are whole SheetData values. A sheet is a sparse map, so a
+   * snapshot is small, and diffing would be a lot of machinery to save bytes
+   * that are already bounded by HISTORY_LIMIT. */
+  const historyRef = useRef<History<SheetData>>(EMPTY_HISTORY);
   const resizeRef = useRef<{ col: number; startX: number; startWidth: number } | null>(null);
   const [resizing, setResizing] = useState<{ col: number; width: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -104,13 +117,39 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
     [data.colWidths, resizing],
   );
 
+  /** The single write path. Recording here rather than at each call site is
+   *  what stops a new mutation quietly being un-undoable. */
+  const commitSheet = useCallback(
+    (next: SheetData) => {
+      historyRef.current = pushHistory(historyRef.current, data);
+      onChange(next);
+    },
+    [data, onChange],
+  );
+
+  const undo = useCallback(() => {
+    const step = undoHistory(historyRef.current, data);
+    if (!step) return false;
+    historyRef.current = step.history;
+    onChange(step.value);
+    return true;
+  }, [data, onChange]);
+
+  const redo = useCallback(() => {
+    const step = redoHistory(historyRef.current, data);
+    if (!step) return false;
+    historyRef.current = step.history;
+    onChange(step.value);
+    return true;
+  }, [data, onChange]);
+
   /** Write one cell. Empty input deletes the key so the map stays sparse. */
   const setCell = useCallback(
     (ref: string, value: string) => {
       const cells = { ...data.cells };
       if (value === "") delete cells[ref];
       else cells[ref] = value;
-      onChange({ ...data, cells });
+      commitSheet({ ...data, cells });
     },
     [data, onChange],
   );
@@ -179,7 +218,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
       const widths = { ...(data.colWidths ?? {}) };
       if (live.width === DEFAULT_COL_WIDTH) delete widths[r.col];
       else widths[r.col] = live.width;
-      onChange({ ...data, colWidths: widths });
+      commitSheet({ ...data, colWidths: widths });
     };
     const onCancel = () => { resizeRef.current = null; setResizing(null); };
     window.addEventListener("pointermove", onMove);
@@ -221,8 +260,20 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
       if (key === "Enter" || key === "F2") { e.preventDefault(); return beginEdit(sel.row, sel.col); }
       if (key === "Delete" || key === "Backspace") {
         e.preventDefault();
-        if (hasRange) return onChange({ ...data, cells: clearRange(data.cells, range) });
+        if (hasRange) return commitSheet({ ...data, cells: clearRange(data.cells, range) });
         return setCell(activeRef, "");
+      }
+      if ((e.metaKey || e.ctrlKey) && key.toLowerCase() === "z") {
+        e.preventDefault();
+        // Shift+Z redoes, matching every editor on both platforms.
+        if (e.shiftKey) redo(); else undo();
+        return;
+      }
+      // Ctrl+Y is the Windows redo and costs nothing to accept.
+      if ((e.metaKey || e.ctrlKey) && key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+        return;
       }
       // Select the whole grid, the shortcut every grid has.
       if ((e.metaKey || e.ctrlKey) && key.toLowerCase() === "a") {
@@ -267,7 +318,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
     (e: React.ClipboardEvent) => {
       if (editing) return;
       onCopy(e);
-      onChange({ ...data, cells: clearRange(data.cells, range) });
+      commitSheet({ ...data, cells: clearRange(data.cells, range) });
     },
     [editing, onCopy, onChange, data, range],
   );
@@ -281,7 +332,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
       // Our own copy: paste the raw cells so formulas survive the round trip.
       // Anything else is plain text and pastes as values.
       const grid = clipRef.current?.text === text ? clipRef.current.raw : parseTSV(text);
-      onChange({ ...data, cells: pasteAt(data.cells, { row: sel.row, col: sel.col }, grid) });
+      commitSheet({ ...data, cells: pasteAt(data.cells, { row: sel.row, col: sel.col }, grid) });
       // Select what landed, which is what a spreadsheet does and makes an
       // accidental paste one Delete away from undone.
       const rows = grid.length;
@@ -393,7 +444,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
                 onDoubleClick={() => {
                   const widths = { ...(data.colWidths ?? {}) };
                   delete widths[c];
-                  onChange({ ...data, colWidths: widths });
+                  commitSheet({ ...data, colWidths: widths });
                 }}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return;

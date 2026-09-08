@@ -375,3 +375,54 @@ export function clearRange(cells: Record<string, string>, range: Range): Record<
   for (const ref of rangeRefs(range)) delete next[ref];
   return next;
 }
+
+/* ── Undo history ─────────────────────────────────────────────────── */
+
+export interface History<T> {
+  /** States before the present one, oldest first. */
+  past: readonly T[];
+  /** States undone out of, nearest first, discarded by the next fresh edit. */
+  future: readonly T[];
+}
+
+export const EMPTY_HISTORY: History<never> = { past: [], future: [] };
+
+/** How many steps back a sheet remembers. Snapshots are whole cell maps, so
+ *  this is a memory bound as much as a usability one. */
+export const HISTORY_LIMIT = 60;
+
+/**
+ * Record the state being replaced.
+ *
+ * The future is dropped: editing after undoing forks the timeline, and the
+ * branch that was undone out of is no longer reachable. Every editor behaves
+ * this way and users rely on it — a redo that resurrects unrelated work is
+ * worse than no redo.
+ */
+export function pushHistory<T>(history: History<T>, replaced: T, limit = HISTORY_LIMIT): History<T> {
+  const past = [...history.past, replaced];
+  return { past: past.length > limit ? past.slice(past.length - limit) : past, future: [] };
+}
+
+/**
+ * Step back. Returns null when there is nothing to undo, so the caller can
+ * leave the event alone rather than committing an identical state.
+ */
+export function undoHistory<T>(history: History<T>, present: T): { history: History<T>; value: T } | null {
+  if (history.past.length === 0) return null;
+  const value = history.past[history.past.length - 1];
+  return {
+    history: { past: history.past.slice(0, -1), future: [present, ...history.future] },
+    value,
+  };
+}
+
+/** Step forward again, undoing an undo. */
+export function redoHistory<T>(history: History<T>, present: T): { history: History<T>; value: T } | null {
+  if (history.future.length === 0) return null;
+  const value = history.future[0];
+  return {
+    history: { past: [...history.past, present], future: history.future.slice(1) },
+    value,
+  };
+}
