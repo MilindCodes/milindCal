@@ -135,5 +135,54 @@ const inZone = (tz, fn) => { process.env.TZ = tz; fn(); };
   });
 }
 
+/* ── Opening and saving must not move the event ───────────────────── */
+
+/**
+ * The docs panel writes with `new Date(local).toISOString()` and reads with
+ * `toDateTimeLocal`. Those have to be exact inverses or the record walks: it
+ * read with `new Date(iso).toISOString().slice(0, 16)`, which hands the input a
+ * UTC clock reading to interpret as local, so a 2pm New York event showed 18:00
+ * and every open-and-save pushed it four hours later.
+ */
+{
+  const fromDateTimeLocal = (local) => (local ? new Date(local).toISOString() : "");
+
+  for (const tz of ZONES.concat(["America/New_York"])) {
+    inZone(tz, () => {
+      const start = new Date(2026, 8, 8, 14, 0, 0); // 2pm local, whatever local is
+      let iso = start.toISOString();
+
+      eq(`the field shows the event's own clock in ${tz}`,
+         toDateTimeLocal(iso).slice(11), "14:00");
+
+      // Ten opens and saves with no edit at all.
+      for (let i = 0; i < 10; i++) iso = fromDateTimeLocal(toDateTimeLocal(iso));
+      eq(`ten open-and-saves do not move the event in ${tz}`,
+         new Date(iso).getTime(), start.getTime());
+    });
+  }
+
+  // The all-day path had the same hole: `.split("T")[0]` reads the UTC date.
+  // That breaks *east* of Greenwich, where local midnight is still yesterday in
+  // UTC — so the field offered the day before the one the user picked.
+  for (const tz of ["Asia/Kolkata", "Pacific/Kiritimati"]) {
+    inZone(tz, () => {
+      const allDayStart = new Date(2026, 8, 8, 0, 0, 0).toISOString();
+      eq(`an all-day field shows the local date in ${tz}`,
+         toDateOnly(allDayStart), "2026-09-08");
+      eq(`and the naive UTC split got it wrong in ${tz}`,
+         allDayStart.split("T")[0], "2026-09-07");
+    });
+  }
+
+  // West of Greenwich the naive split happened to agree, which is half of why
+  // this survived: it is only wrong for some of the planet.
+  inZone("America/Los_Angeles", () => {
+    const allDayStart = new Date(2026, 8, 8, 0, 0, 0).toISOString();
+    eq("an all-day field shows the local date in America/Los_Angeles",
+       toDateOnly(allDayStart), "2026-09-08");
+  });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

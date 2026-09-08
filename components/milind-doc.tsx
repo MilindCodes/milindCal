@@ -53,6 +53,7 @@ import {
 } from "react";
 import { BacklinksList } from "@/components/backlinks-list";
 import { useEntityActions } from "@/components/entity-store-context";
+import { toDateOnly, toDateTimeLocal } from "@/lib/datetime";
 import { entityKey } from "@/lib/entity-store";
 import type { MilindDocCalendarMeta, MilindDocFile, Task } from "@/lib/models";
 
@@ -242,10 +243,25 @@ function FloatingCalendarPill({
     }
   };
 
-  const toDateTimeLocal = (iso: string) => {
-    if (!iso) return "";
-    try { return new Date(iso).toISOString().slice(0, 16); } catch { return ""; }
-  };
+  /* Reading and writing these fields is deliberately asymmetric, and it has to
+   * be. `<input type="datetime-local">` speaks local wall-clock time in both
+   * directions; the record stores a UTC instant.
+   *
+   * Writing is already right: `new Date("2026-09-08T14:00")` — a date-time with
+   * no offset — is parsed as *local* by the spec, so `.toISOString()` produces
+   * the correct instant.
+   *
+   * Reading was not. It was `new Date(iso).toISOString().slice(0, 16)`, which
+   * hands the input a UTC clock reading and lets it be interpreted as local. A
+   * 2pm event in New York displayed as 18:00, and because the write path is
+   * correct, every open-and-save moved the event four hours later: 2pm, 6pm,
+   * 10pm, 2am the next day. Kolkata drifted the other way, 5.5 hours a time.
+   * Only UTC was safe, which is why it survived.
+   *
+   * `toDateOnly` closes the same hole on the all-day path, which took the UTC
+   * date with `.split("T")[0]`. That one breaks *east* of Greenwich: an all-day
+   * event stored as local midnight on 8 September is 7 September 18:30Z in
+   * Kolkata, so the field offered the day before the one the user picked. */
   const fromDateTimeLocal = (local: string) => {
     if (!local) return "";
     return new Date(local).toISOString();
@@ -331,7 +347,7 @@ function FloatingCalendarPill({
                   <span>Start</span>
                   <input
                     type={draft.allDay ? "date" : "datetime-local"}
-                    value={draft.allDay ? draft.start.split("T")[0] : toDateTimeLocal(draft.start)}
+                    value={draft.allDay ? toDateOnly(draft.start) : toDateTimeLocal(draft.start)}
                     onChange={(e) =>
                       set("start", draft.allDay ? e.target.value : fromDateTimeLocal(e.target.value))
                     }
@@ -342,7 +358,7 @@ function FloatingCalendarPill({
                   <span>End</span>
                   <input
                     type={draft.allDay ? "date" : "datetime-local"}
-                    value={draft.allDay ? draft.end.split("T")[0] : toDateTimeLocal(draft.end)}
+                    value={draft.allDay ? toDateOnly(draft.end) : toDateTimeLocal(draft.end)}
                     onChange={(e) =>
                       set("end", draft.allDay ? e.target.value : fromDateTimeLocal(e.target.value))
                     }
