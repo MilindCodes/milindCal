@@ -52,6 +52,81 @@ function formatDue(dateStr: string): string {
   });
 }
 
+/**
+ * The next task row in document order, in either direction.
+ *
+ * Read from the DOM rather than from an index passed down as a prop: the three
+ * board views nest their rows differently, and list order changes with sorting
+ * and filtering, so the document is the only place that already knows what is
+ * actually on screen and in what order. It also keeps the rows memo-stable —
+ * an index prop would change for every row whenever one is inserted.
+ */
+function neighbourRow(from: HTMLElement, direction: 1 | -1): HTMLElement | null {
+  const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-task-row]"));
+  const index = rows.indexOf(from);
+  return index === -1 ? null : rows[index + direction] ?? null;
+}
+
+/**
+ * Keyboard operation for a task row.
+ *
+ * dnd-kit already puts `role="button"` and `tabIndex={0}` on every row, so the
+ * rows have always been reachable with Tab and have always announced
+ * themselves as actionable — and every key press did nothing at all. A task
+ * board you cannot drive from the keyboard is not a serious task board.
+ *
+ *   Space           complete / uncomplete, the primary action
+ *   Enter           open as a doc
+ *   Delete/Back     delete, moving focus first so it does not fall to <body>
+ *   Up/Down         walk the visible rows
+ */
+function useTaskRowKeys(
+  taskId: string,
+  onToggle: (id: string) => void,
+  onDelete: (id: string) => void,
+  onOpenDoc: (id: string) => void,
+) {
+  return useCallback(
+    (e: React.KeyboardEvent<HTMLElement>) => {
+      // A key pressed on a button inside the row belongs to that button.
+      if (e.target !== e.currentTarget) return;
+
+      switch (e.key) {
+        case " ":
+          e.preventDefault(); // or the board scrolls under the selection
+          onToggle(taskId);
+          break;
+        case "Enter":
+          e.preventDefault();
+          onOpenDoc(taskId);
+          break;
+        case "Delete":
+        case "Backspace": {
+          e.preventDefault();
+          // Focus has to move before the row unmounts. Otherwise it lands on
+          // <body> and the next Tab restarts from the top of the document,
+          // which is how a keyboard user loses their place in a long list.
+          const next = neighbourRow(e.currentTarget, 1) ?? neighbourRow(e.currentTarget, -1);
+          onDelete(taskId);
+          next?.focus();
+          break;
+        }
+        case "ArrowDown":
+        case "ArrowUp": {
+          const next = neighbourRow(e.currentTarget, e.key === "ArrowDown" ? 1 : -1);
+          if (!next) return; // let the page scroll at either end
+          e.preventDefault();
+          next.focus();
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [taskId, onToggle, onDelete, onOpenDoc],
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Empty state                                                        */
 /* ------------------------------------------------------------------ */
@@ -94,11 +169,13 @@ const KanbanCard = memo(function KanbanCard({
   const borderColor = currentCol?.color ?? IMPORTANCE_COLORS[task.importance ?? "medium"];
   const dueFmt = task.dueDate ? formatDue(task.dueDate) : null;
   const drag = useUniversalDraggable(payloadFromTask(task));
+  const onKeyDown = useTaskRowKeys(task.id, onToggle, onDelete, onOpenDoc);
 
   return (
     <motion.div
       animate={{ opacity: drag.isDragging ? 0.35 : 1, y: 0 }}
       className={`kanban-card ${task.completed ? "done" : ""}`}
+      data-task-row
       exit={{ opacity: 0, scale: 0.95 }}
       initial={{ opacity: 0, y: 8 }}
       layout
@@ -108,11 +185,21 @@ const KanbanCard = memo(function KanbanCard({
       whileHover={{ y: -2, boxShadow: "0 6px 18px rgba(0,0,0,0.1)" }}
       {...drag.attributes}
       {...drag.listeners}
+      /* After the spread, so this is the handler that runs — but dnd-kit's own
+       * key handling is called through rather than dropped, so a keyboard
+       * sensor added later still works. */
+      onKeyDown={(e) => {
+        drag.listeners?.onKeyDown?.(e);
+        onKeyDown(e);
+      }}
     >
       <div className="kanban-card-top">
         <button
+          aria-label="Done"
+          aria-pressed={task.completed}
           className={`kanban-check ${task.completed ? "done" : ""}`}
           onClick={() => onToggle(task.id)}
+          onPointerDown={(e) => e.stopPropagation()}
           type="button"
         >
           <Check size={11} />
@@ -128,7 +215,14 @@ const KanbanCard = memo(function KanbanCard({
         >
           <PenLine size={11} />
         </button>
-        <button className="kanban-card-del" onClick={() => onDelete(task.id)} type="button">
+        <button
+          aria-label="Delete task"
+          className="kanban-card-del"
+          onClick={() => onDelete(task.id)}
+          onPointerDown={(e) => e.stopPropagation()}
+          title="Delete task"
+          type="button"
+        >
           <X size={11} />
         </button>
       </div>
@@ -190,10 +284,12 @@ const TaskListItem = memo(function TaskListItem({
   hoverScale?: boolean;
 }) {
   const drag = useUniversalDraggable(payloadFromTask(task));
+  const onKeyDown = useTaskRowKeys(task.id, onToggle, onDelete, onOpenDoc);
   return (
     <motion.div
       animate={{ opacity: drag.isDragging ? 0.35 : 1, y: 0 }}
       className="task-item"
+      data-task-row
       exit={{ opacity: 0, y: -8 }}
       initial={{ opacity: 0, y: 12 }}
       layout
@@ -204,8 +300,14 @@ const TaskListItem = memo(function TaskListItem({
       whileHover={hoverScale ? { x: 3, scale: 1.01 } : { x: 3 }}
       {...drag.attributes}
       {...drag.listeners}
+      onKeyDown={(e) => {
+        drag.listeners?.onKeyDown?.(e);
+        onKeyDown(e);
+      }}
     >
       <motion.button
+        aria-label="Done"
+        aria-pressed={task.completed}
         className={`task-toggle${task.completed ? " done" : ""}`}
         onClick={() => onToggle(task.id)}
         // stop dnd-kit's drag start when clicking the toggle button
@@ -477,6 +579,8 @@ const TimelineView = memo(function TimelineView({
             {group.tasks.map((task) => (
               <div className={`timeline-task ${task.completed ? "done" : ""}`} key={task.id}>
                 <button
+                  aria-label="Done"
+                  aria-pressed={task.completed}
                   className={`task-toggle ${task.completed ? "done" : ""}`}
                   onClick={() => onToggle(task.id)}
                   type="button"
@@ -507,7 +611,13 @@ const TimelineView = memo(function TimelineView({
                     )}
                   </div>
                 </div>
-                <button className="task-delete" onClick={() => onDelete(task.id)} type="button">
+                <button
+                  aria-label="Delete task"
+                  className="task-delete"
+                  onClick={() => onDelete(task.id)}
+                  title="Delete task"
+                  type="button"
+                >
                   <Trash2 size={12} />
                 </button>
               </div>
