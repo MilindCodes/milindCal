@@ -17,8 +17,9 @@
  * JavaScript and no measurement pass.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useGridDrag } from "./use-grid-drag";
+import { useNow } from "./use-now";
 import {
   DEFAULT_AXIS,
   addDays,
@@ -96,15 +97,9 @@ export function TimeGrid({
    * A timestamp cannot get stuck: it only suppresses the click that genuinely
    * follows a drag, and heals itself a moment later. */
   const lastDragEnd = useRef(0);
-  const [now, setNow] = useState(() => new Date());
-
-  // The indicator only needs minute resolution; ticking faster would re-render
-  // the whole grid for a line that has not visibly moved.
-  useEffect(() => {
-    if (!nowIndicator) return;
-    const id = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(id);
-  }, [nowIndicator]);
+  /* Null until mounted — see use-now.ts. Everything below that depends on the
+   * clock has to tolerate not having one yet. */
+  const now = useNow(nowIndicator);
 
   const buckets = useMemo(() => bucketByDay(events, days), [events, days]);
 
@@ -156,13 +151,15 @@ export function TimeGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const todayIndex = days.findIndex((d) => sameDay(d, now));
-  const nowFraction = fractionOf(minutesInto(now), axis);
+  const todayIndex = now ? days.findIndex((d) => sameDay(d, now)) : -1;
+  const nowMinutes = now ? minutesInto(now) : 0;
+  const nowFraction = fractionOf(nowMinutes, axis);
   const nowVisible =
     nowIndicator &&
+    now !== null &&
     todayIndex >= 0 &&
-    minutesInto(now) >= axis.minMinutes &&
-    minutesInto(now) <= axis.maxMinutes;
+    nowMinutes >= axis.minMinutes &&
+    nowMinutes <= axis.maxMinutes;
 
   const handleCommit = useCallback(
     (kind: "create" | "move" | "resize", result: { start: Date; end: Date }, id?: string) => {
@@ -200,7 +197,7 @@ export function TimeGrid({
         <div className="tg__corner" />
         {days.map((day) => (
           <div
-            className={`tg__dayhead${sameDay(day, now) ? " is-today" : ""}`}
+            className={`tg__dayhead${now && sameDay(day, now) ? " is-today" : ""}`}
             key={day.toISOString()}
           >
             <span className="tg__dayname">
@@ -253,7 +250,7 @@ export function TimeGrid({
 
           {days.map((day, i) => (
             <div
-              className={`tg__col${sameDay(day, now) ? " is-today" : ""}`}
+              className={`tg__col${now && sameDay(day, now) ? " is-today" : ""}`}
               key={day.toISOString()}
               onPointerDown={(e) => {
                 if (e.target !== e.currentTarget) return; // started on a tile

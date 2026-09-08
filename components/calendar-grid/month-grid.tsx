@@ -14,6 +14,7 @@
  */
 
 import { useMemo, type ReactNode } from "react";
+import { useNow } from "./use-now";
 import {
   capMonthWeek,
   layoutMonthWeek,
@@ -64,7 +65,11 @@ export function MonthGrid({
   const weeks = useMemo(() => monthWeeks(anchor, weekStart), [anchor, weekStart]);
   const labels = useMemo(() => WEEKDAY_LABELS(weekStart), [weekStart]);
   const month = anchor.getMonth();
-  const today = new Date();
+  /* Null on the server and until mounted; see use-now.ts. There is no time
+   * indicator here, so it does not need minute resolution — but it does need
+   * to stop being yesterday once midnight passes, which a plain `new Date()`
+   * evaluated during render never did either. */
+  const today = useNow();
 
   const rows = useMemo(
     () =>
@@ -94,7 +99,7 @@ export function MonthGrid({
                   className={
                     "mg__cell" +
                     (day.getMonth() === month ? "" : " is-outside") +
-                    (sameDay(day, today) ? " is-today" : "")
+                    (today && sameDay(day, today) ? " is-today" : "")
                   }
                   key={day.toISOString()}
                   onClick={() => onDayClick?.(day)}
@@ -181,7 +186,7 @@ export function YearGrid({
   weekStart?: 0 | 1;
   onDayClick?: (day: Date) => void;
 }) {
-  const today = new Date();
+  const today = useNow();
 
   const counts = useMemo(() => {
     const map = new Map<string, number>();
@@ -213,7 +218,7 @@ export function YearGrid({
                     className={
                       "yg__day" +
                       (inMonth ? "" : " is-outside") +
-                      (sameDay(day, today) ? " is-today" : "") +
+                      (today && sameDay(day, today) ? " is-today" : "") +
                       (n > 0 ? " has-events" : "")
                     }
                     disabled={!inMonth}
