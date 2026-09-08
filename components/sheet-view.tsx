@@ -18,8 +18,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_SHEET,
   cellRef,
+  clearRange,
   columnName,
   evaluateCell,
+  normalizeRange,
+  parseTSV,
+  pasteAt,
+  rangeContains,
+  rangeSize,
+  rangeToRaw,
+  rangeToTSV,
   type SheetData,
 } from "@/lib/sheet";
 
@@ -52,11 +60,23 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
    * The drag is held in a ref and mirrored into state: the ref is what the
    * pointer handlers read (they are attached once and would otherwise close
    * over a stale value), the state is what re-renders the grid. */
+  /* Selection is an anchor plus a focus. The anchor is where the selection
+   * started; the focus is where it now ends and is also the cell that types,
+   * edits and the formula bar act on — the same split every spreadsheet uses. */
+  const [anchor, setAnchor] = useState<{ row: number; col: number } | null>(null);
+  const selectingRef = useRef(false);
+  /* A copy made inside milindCal should paste back with its formulas intact,
+   * but the clipboard only carries text. Keeping the raw grid alongside the
+   * text we wrote lets a paste recognise its own copy and restore formulas,
+   * while a paste from anywhere else still works as plain values. */
+  const clipRef = useRef<{ text: string; raw: string[][] } | null>(null);
   const resizeRef = useRef<{ col: number; startX: number; startWidth: number } | null>(null);
   const [resizing, setResizing] = useState<{ col: number; width: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const activeRef = cellRef(sel.row, sel.col);
+  const range = useMemo(() => normalizeRange(anchor ?? sel, sel), [anchor, sel]);
+  const hasRange = rangeSize(range) > 1;
   const rawActive = data.cells[activeRef] ?? "";
 
   /* The formula bar buffers its text instead of writing per keystroke.
@@ -126,6 +146,17 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
     if (editing) inputRef.current?.focus();
   }, [editing]);
 
+  // The release can land outside the grid, so the listener is on the window.
+  useEffect(() => {
+    const stop = () => { selectingRef.current = false; };
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    return () => {
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+  }, []);
+
   /* One write on release, not one per pointer move: each write rewrites the
    * localStorage mirror and PATCHes the whole sheet to milindDrive, which is
    * the same trap the formula bar was in. */
@@ -172,6 +203,10 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
 
       const move = (dr: number, dc: number) => {
         e.preventDefault();
+        // Shift keeps the anchor and moves the focus, growing the selection.
+        // Without it the selection collapses back to a single cell.
+        if (e.shiftKey) setAnchor((a) => a ?? { row: sel.row, col: sel.col });
+        else setAnchor(null);
         setSel((s) => ({
           row: Math.max(0, Math.min(s.row + dr, data.rows - 1)),
           col: Math.max(0, Math.min(s.col + dc, data.cols - 1)),
@@ -184,7 +219,17 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
       if (key === "ArrowLeft") return move(0, -1);
       if (key === "Tab") { e.preventDefault(); return move(0, e.shiftKey ? -1 : 1); }
       if (key === "Enter" || key === "F2") { e.preventDefault(); return beginEdit(sel.row, sel.col); }
-      if (key === "Delete" || key === "Backspace") { e.preventDefault(); return setCell(activeRef, ""); }
+      if (key === "Delete" || key === "Backspace") {
+        e.preventDefault();
+        if (hasRange) return onChange({ ...data, cells: clearRange(data.cells, range) });
+        return setCell(activeRef, "");
+      }
+      // Select the whole grid, the shortcut every grid has.
+      if ((e.metaKey || e.ctrlKey) && key.toLowerCase() === "a") {
+        e.preventDefault();
+        setAnchor({ row: 0, col: 0 });
+        return setSel({ row: data.rows - 1, col: data.cols - 1 });
+      }
       if (key === "Home") { e.preventDefault(); return setSel((s) => ({ ...s, col: 0 })); }
       if (key === "End") { e.preventDefault(); return setSel((s) => ({ ...s, col: data.cols - 1 })); }
 
@@ -195,7 +240,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
         beginEdit(sel.row, sel.col, key);
       }
     },
-    [editing, data.rows, data.cols, beginEdit, setCell, activeRef, sel.row, sel.col],
+    [editing, data, beginEdit, setCell, activeRef, sel.row, sel.col, hasRange, range, onChange],
   );
 
   const onCellInputKey = useCallback(
@@ -205,6 +250,49 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
       else if (e.key === "Escape") { e.preventDefault(); setEditing(null); gridRef.current?.focus(); }
     },
     [commit],
+  );
+
+  const onCopy = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (editing) return; // let the cell editor handle its own text
+      e.preventDefault();
+      const text = rangeToTSV(range, data.cells);
+      clipRef.current = { text, raw: rangeToRaw(range, data.cells) };
+      e.clipboardData.setData("text/plain", text);
+    },
+    [editing, range, data.cells],
+  );
+
+  const onCut = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (editing) return;
+      onCopy(e);
+      onChange({ ...data, cells: clearRange(data.cells, range) });
+    },
+    [editing, onCopy, onChange, data, range],
+  );
+
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (editing) return;
+      const text = e.clipboardData.getData("text/plain");
+      if (!text) return;
+      e.preventDefault();
+      // Our own copy: paste the raw cells so formulas survive the round trip.
+      // Anything else is plain text and pastes as values.
+      const grid = clipRef.current?.text === text ? clipRef.current.raw : parseTSV(text);
+      onChange({ ...data, cells: pasteAt(data.cells, { row: sel.row, col: sel.col }, grid) });
+      // Select what landed, which is what a spreadsheet does and makes an
+      // accidental paste one Delete away from undone.
+      const rows = grid.length;
+      const cols = Math.max(...grid.map((r) => r.length));
+      setAnchor({ row: sel.row, col: sel.col });
+      setSel({
+        row: Math.min(sel.row + rows - 1, data.rows - 1),
+        col: Math.min(sel.col + cols - 1, data.cols - 1),
+      });
+    },
+    [editing, data, onChange, sel.row, sel.col],
   );
 
   const onFormulaKey = useCallback(
@@ -275,7 +363,10 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
         aria-label={`${title} spreadsheet`}
         aria-rowcount={data.rows}
         className="sheet__grid"
+        onCopy={onCopy}
+        onCut={onCut}
         onKeyDown={onGridKey}
+        onPaste={onPaste}
         ref={gridRef}
         role="grid"
         tabIndex={0}
@@ -340,6 +431,8 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
                   className={
                     "sheet__cell" +
                     (isSel ? " is-selected" : "") +
+                    // Everything else inside a multi-cell selection.
+                    (!isSel && hasRange && rangeContains(range, r, c) ? " is-inrange" : "") +
                     // Crosshair: the row and column of the selection tint, so
                     // you can trace a cell back to its headers across a wide
                     // grid without counting.
@@ -350,7 +443,22 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
                   id={cellDomId(ref)}
                   key={c}
                   onDoubleClick={() => { setSel({ row: r, col: c }); beginEdit(r, c); }}
-                  onMouseDown={() => { setSel({ row: r, col: c }); gridRef.current?.focus(); }}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    gridRef.current?.focus();
+                    if (e.shiftKey) {
+                      // Extend from the existing anchor rather than starting over.
+                      setAnchor((a) => a ?? { row: sel.row, col: sel.col });
+                      setSel({ row: r, col: c });
+                      return;
+                    }
+                    selectingRef.current = true;
+                    setAnchor({ row: r, col: c });
+                    setSel({ row: r, col: c });
+                  }}
+                  onPointerEnter={() => {
+                    if (selectingRef.current) setSel({ row: r, col: c });
+                  }}
                   role="gridcell"
                 >
                   {isEditing ? (

@@ -261,3 +261,117 @@ export function isNumericCell(ref: string, cells: Record<string, string>): boole
   const v = evaluateCell(ref, cells);
   return typeof v === "number";
 }
+
+/* ── Ranges, copy and paste ───────────────────────────────────────── */
+
+export interface CellPos { row: number; col: number }
+
+export interface Range {
+  r0: number; c0: number; r1: number; c1: number;
+}
+
+/**
+ * Order two corners into a rectangle.
+ *
+ * Selections are made from an anchor to wherever the pointer or the arrow keys
+ * ended up, which is just as often up and to the left. Everything downstream
+ * assumes r0 <= r1 and c0 <= c1, so the ordering happens once, here.
+ */
+export function normalizeRange(a: CellPos, b: CellPos): Range {
+  return {
+    r0: Math.min(a.row, b.row),
+    c0: Math.min(a.col, b.col),
+    r1: Math.max(a.row, b.row),
+    c1: Math.max(a.col, b.col),
+  };
+}
+
+export function rangeContains(range: Range, row: number, col: number): boolean {
+  return row >= range.r0 && row <= range.r1 && col >= range.c0 && col <= range.c1;
+}
+
+export function rangeSize(range: Range): number {
+  return (range.r1 - range.r0 + 1) * (range.c1 - range.c0 + 1);
+}
+
+/** Every ref in a range, row-major. */
+export function rangeRefs(range: Range): string[] {
+  const out: string[] = [];
+  for (let r = range.r0; r <= range.r1; r++)
+    for (let c = range.c0; c <= range.c1; c++) out.push(cellRef(r, c));
+  return out;
+}
+
+/**
+ * A range as tab-separated text — what every spreadsheet puts on the clipboard.
+ *
+ * Evaluated values, not formulas: pasting into a mail or a document should give
+ * the numbers a person can read, which is what they were looking at. Copying
+ * within milindCal keeps formulas by reading the cell map directly instead.
+ */
+export function rangeToTSV(range: Range, cells: Record<string, string>): string {
+  const rows: string[] = [];
+  for (let r = range.r0; r <= range.r1; r++) {
+    const row: string[] = [];
+    for (let c = range.c0; c <= range.c1; c++) {
+      const v = evaluateCell(cellRef(r, c), cells);
+      row.push(String(v));
+    }
+    rows.push(row.join("\t"));
+  }
+  return rows.join("\n");
+}
+
+/** The same range as raw text, so a copy inside milindCal keeps its formulas. */
+export function rangeToRaw(range: Range, cells: Record<string, string>): string[][] {
+  const rows: string[][] = [];
+  for (let r = range.r0; r <= range.r1; r++) {
+    const row: string[] = [];
+    for (let c = range.c0; c <= range.c1; c++) row.push(cells[cellRef(r, c)] ?? "");
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Parse pasted text into a grid.
+ *
+ * Accepts what a spreadsheet or a text editor actually puts on a clipboard:
+ * tabs between columns, and CRLF, LF or CR between rows. A trailing newline is
+ * dropped so "a\nb\n" pastes two rows, not three.
+ */
+export function parseTSV(text: string): string[][] {
+  const trimmed = text.replace(/\r\n?/g, "\n").replace(/\n$/, "");
+  if (trimmed === "") return [[""]];
+  return trimmed.split("\n").map((line) => line.split("\t"));
+}
+
+/**
+ * Write a grid of values starting at one cell.
+ *
+ * Returns a new cell map. Empty strings delete rather than store, so pasting a
+ * block with gaps clears those cells instead of leaving stale values behind and
+ * keeps the map sparse.
+ */
+export function pasteAt(
+  cells: Record<string, string>,
+  at: CellPos,
+  grid: readonly (readonly string[])[],
+): Record<string, string> {
+  const next = { ...cells };
+  grid.forEach((row, dr) => {
+    row.forEach((value, dc) => {
+      const ref = cellRef(at.row + dr, at.col + dc);
+      if (value === "") delete next[ref];
+      else next[ref] = value;
+    });
+  });
+  return next;
+}
+
+/** Clear every cell in a range, keeping the map sparse. */
+export function clearRange(cells: Record<string, string>, range: Range): Record<string, string> {
+  const next = { ...cells };
+  for (const ref of rangeRefs(range)) delete next[ref];
+  return next;
+}

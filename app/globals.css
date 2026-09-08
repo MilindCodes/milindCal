@@ -8962,3 +8962,36 @@ a.primary-button {
 @supports not (background: color-mix(in srgb, red 50%, blue)) {
   .sheet__colhead:hover .sheet__colresize::after { background: var(--sand); }
 }
+
+/* ── Sheet range selection ───────────────────────────────────────────
+ *
+ * The focused cell keeps its drawn ring; the rest of a multi-cell selection
+ * takes a flat tint. Giving every cell a ring would turn a selected block
+ * into a grid of boxes and hide which cell actually types.
+ */
+
+.sheet__cell.is-inrange {
+  background: color-mix(in srgb, var(--cherry) 12%, var(--salt));
+}
+
+/* The crosshair is redundant once a block is selected, and its tint fights
+ * the selection's. */
+.sheet__cell.is-inrange.is-axis {
+  background: color-mix(in srgb, var(--cherry) 12%, var(--salt));
+}
+
+/* A drag across the grid must select, not paint a browser text selection over
+ * the numbers. */
+.sheet__grid {
+  user-select: none;
+}
+
+.sheet__editor,
+.sheet__formula {
+  user-select: text;
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .sheet__cell.is-inrange,
+  .sheet__cell.is-inrange.is-axis { background: var(--paper-2); }
+}
