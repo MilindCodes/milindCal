@@ -46,6 +46,33 @@ function sampleEvents(days: Date[]): GridEvent[] {
       start: startOfDay(days[2]),
       end: addDays(startOfDay(days[4]), 1),
     },
+    // Overlapping all-day events, to exercise lane stacking in the strip: one
+    // bar cannot sit on top of another, and the strip has to grow to hold them.
+    {
+      id: "m",
+      title: "Sprint",
+      accent: "#5b3a40",
+      allDay: true,
+      start: startOfDay(days[0]),
+      end: addDays(startOfDay(days[3]), 1),
+    },
+    {
+      id: "n",
+      title: "On call",
+      accent: "#7a1320",
+      allDay: true,
+      start: startOfDay(days[3]),
+      end: addDays(startOfDay(days[6]), 1),
+    },
+    // Starts before the week and ends after it: both ends must draw open.
+    {
+      id: "o",
+      title: "Quarter",
+      accent: "#8a6a6f",
+      allDay: true,
+      start: addDays(startOfDay(days[0]), -3),
+      end: addDays(startOfDay(days[6]), 4),
+    },
   ];
 }
 

@@ -8323,24 +8323,29 @@ a.primary-button {
   border-right: 1px solid var(--line);
 }
 
-.tg__allday-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 3px;
-  border-right: 1px solid var(--line);
+/* One positioning context for the whole week, so an event covering Tuesday to
+ * Friday is one bar rather than one chip repeated in four cells. Day
+ * separators are painted here instead of being borders on per-day cells,
+ * because there are no per-day cells any more. */
+.tg__allday-track {
+  --tg-allday-lane: 20px;
+  grid-column: 2 / -1;
+  position: relative;
   min-width: 0;
-}
-
-.tg__allday-cell:last-child {
-  border-right: none;
+  padding: 4px 0;
+  /* Reserve exactly the lanes in use: an empty strip should not hold height,
+   * and four stacked events should not be clipped. */
+  min-height: calc(var(--tg-allday-lanes, 1) * var(--tg-allday-lane) + 8px);
 }
 
 .tg__chip {
-  display: block;
-  width: 100%;
+  position: absolute;
+  height: calc(var(--tg-allday-lane) - 3px);
+  display: flex;
+  align-items: center;
+  gap: 5px;
   text-align: left;
-  padding: 2px 6px;
+  padding: 0 6px;
   border: none;
   border-left: 3px solid var(--accent);
   border-radius: var(--radius-sm);
@@ -8353,6 +8358,19 @@ a.primary-button {
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: background 0.15s ease;
+}
+
+/* A bar cut by the edge of the view is drawn open on that side, so it reads as
+ * continuing rather than as an event that happens to end there. */
+.tg__chip.continues-before {
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.tg__chip.continues-after {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .tg__chip:hover {

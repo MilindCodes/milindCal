@@ -23,7 +23,7 @@ import { useNow } from "./use-now";
 import {
   DEFAULT_AXIS,
   eventLabel,
-  addDays,
+  layoutMonthWeek,
   bucketByDay,
   fractionOf,
   intersectsAxis,
@@ -118,23 +118,25 @@ export function TimeGrid({
     () => days.map((_, i) => (buckets.get(i) ?? []).filter((ev) => !intersectsAxis(ev, axis))),
     [days, buckets, axis],
   );
-  const allDay = useMemo(() => {
-    const rows = days.map(() => [] as GridEvent[]);
-    for (const ev of events) {
-      if (!ev.allDay) continue;
-      days.forEach((day, i) => {
-        if (ev.start.getTime() < addDays(startOfDay(day), 1).getTime() &&
-            ev.end.getTime() > startOfDay(day).getTime()) rows[i].push(ev);
-      });
-    }
-    return rows;
-  }, [events, days]);
+  const allDayEvents = useMemo(() => events.filter((ev) => ev.allDay), [events]);
 
-  // All-day events and off-axis ones share the same strip. Off-axis chips keep
-  // their clock time so they read as "happens, just not on this axis".
-  const strip = useMemo(
-    () => days.map((_, i) => [...allDay[i], ...offAxis[i]]),
-    [days, allDay, offAxis],
+  /* All-day events and off-axis ones share the same strip, laid out as
+   * spanning bars rather than one chip per day.
+   *
+   * A Tuesday-to-Friday conference used to render as three identical chips,
+   * which is the single clearest tell that a grid is drawing days rather than
+   * events. `layoutMonthWeek` already solves exactly this — a week of spanning
+   * bars with lanes — and is tested without a DOM, so the strip is just a
+   * one-row month week. Off-axis events arrive already clipped to a single day
+   * by `bucketByDay`, so they fall out as one-column segments for free, and
+   * keep their clock time so they read as "happens, just not on this axis". */
+  const stripSegments = useMemo(
+    () => layoutMonthWeek([...allDayEvents, ...days.flatMap((_, i) => offAxis[i])], days),
+    [allDayEvents, offAxis, days],
+  );
+  const stripLanes = useMemo(
+    () => stripSegments.reduce((max, seg) => Math.max(max, seg.lane + 1), 0),
+    [stripSegments],
   );
 
   const hours = useMemo(() => hourLines(axis), [axis]);
@@ -209,30 +211,52 @@ export function TimeGrid({
         ))}
       </div>
 
-      {strip.some((row) => row.length > 0) ? (
+      {stripSegments.length > 0 ? (
         <div className="tg__allday" style={{ gridTemplateColumns: columns }}>
           <div className="tg__allday-label">all-day</div>
-          {strip.map((row, i) => (
-            <div className="tg__allday-cell" key={days[i].toISOString()}>
-              {row.map((ev) => (
-                <button
-                  aria-label={eventLabel(ev)}
-                  className="tg__chip"
-                  key={ev.id}
-                  onClick={() => onEventClick?.(ev)}
-                  style={{ ["--accent" as string]: ev.accent ?? "var(--cherry)" }}
-                  type="button"
-                >
-                  {ev.allDay ? null : (
-                    <span className="tg__chip-time">
-                      {ev.start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-                    </span>
-                  )}
-                  {ev.title}
-                </button>
-              ))}
-            </div>
-          ))}
+          {/* One positioning context for the whole week, so a bar can cross
+            * several days. The day separators are painted onto it rather than
+            * drawn as cell borders, the same way the hour lines are. */}
+          <div
+            className="tg__allday-track"
+            style={{
+              ["--tg-allday-lanes" as string]: stripLanes,
+              backgroundImage:
+                `repeating-linear-gradient(to right, var(--tg-hour-line) 0 1px,` +
+                ` transparent 1px ${100 / days.length}%)`,
+            }}
+          >
+            {stripSegments.map((seg) => (
+              <button
+                aria-label={eventLabel(seg.event)}
+                className={
+                  "tg__chip" +
+                  (seg.event.done ? " is-done" : "") +
+                  (seg.continuesBefore ? " continues-before" : "") +
+                  (seg.continuesAfter ? " continues-after" : "")
+                }
+                key={seg.event.id + ":" + seg.startCol}
+                onClick={() => onEventClick?.(seg.event)}
+                style={{
+                  left: `calc(${(seg.startCol / days.length) * 100}% + 3px)`,
+                  width: `calc(${((seg.endCol - seg.startCol + 1) / days.length) * 100}% - 6px)`,
+                  top: `calc(${seg.lane} * var(--tg-allday-lane))`,
+                  ["--accent" as string]: seg.event.accent ?? "var(--cherry)",
+                }}
+                type="button"
+              >
+                {/* A cut bar continuing from the previous week already showed
+                  * its time where it started; repeating it reads as a second
+                  * event. */}
+                {!seg.event.allDay && !seg.continuesBefore ? (
+                  <span className="tg__chip-time">
+                    {seg.event.start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                  </span>
+                ) : null}
+                {seg.event.title}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
 
