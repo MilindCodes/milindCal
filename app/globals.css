@@ -8514,7 +8514,8 @@ a.primary-button {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--ink-2);
-  margin-right: 5px;
+  /* No margin: the chip is a flex row now and its `gap` owns this spacing.
+   * Keeping both put 10px between the time and the title. */
 }
 
 /* ── Time grid interactions ──────────────────────────────────────── */
