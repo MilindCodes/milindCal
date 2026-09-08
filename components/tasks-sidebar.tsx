@@ -7,11 +7,11 @@ import {
   Reply, ReplyAll, Send, Trash2, Unlink, User, X,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { v4 as uuid } from "uuid";
 import { BacklinksList } from "@/components/backlinks-list";
 import { useEntityActions, useTasks } from "@/components/entity-store-context";
 import { useUniversalDraggable, useUniversalDroppable } from "@/components/universal-drag-layer";
 import { entityKey, payloadFromTask } from "@/lib/entity-store";
+import { newId } from "@/lib/record";
 import type {
   GmailContact, GmailMessageDetail, GmailMessageSummary, KanbanColumn, Task, TaskImportance,
 } from "@/lib/models";
@@ -341,7 +341,7 @@ const InlineKanbanBoard = memo(function InlineKanbanBoard({
   };
 
   const addColumn = () => {
-    const id = uuid().slice(0, 8);
+    const id = newId().slice(0, 8);
     onColumnsChange([...columns, { id, label: "New Column", color: "#8b5cf6" }]);
   };
 
@@ -737,7 +737,7 @@ export function TasksSidebar({
     if (!title) { setExpandedAdd(true); return; }
 
     const localDraft: Task = {
-      id: uuid(),
+      id: newId(),
       title,
       description: draftDescription.trim() || undefined,
       completed: false,

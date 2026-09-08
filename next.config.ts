@@ -8,10 +8,10 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     // Rewrite barrel imports (`import { X } from "lucide-react"`) into direct
-    // per-module imports so the bundler only pulls the icons/helpers actually
-    // referenced. lucide-react in particular re-exports ~1,500 components from
-    // its index, and every one of them was reachable from the initial chunk.
-    optimizePackageImports: ["lucide-react", "date-fns"]
+    // per-module imports so the bundler only pulls the icons actually
+    // referenced. lucide-react re-exports ~1,500 components from its index, and
+    // every one of them was reachable from the initial chunk.
+    optimizePackageImports: ["lucide-react"]
   }
 };
 

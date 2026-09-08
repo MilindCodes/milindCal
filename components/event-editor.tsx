@@ -1,7 +1,6 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { addHours } from "date-fns";
 import { memo, type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, FileText, X } from "lucide-react";
 import { allDayEndToExclusive, allDayEndToInclusive, toDateOnly, toDateTimeLocal, toUtcRruleDate } from "@/lib/datetime";
@@ -168,7 +167,7 @@ export const EventEditor = memo(function EventEditor({
 
     const now = new Date();
     const fallbackStart = defaultStart ?? now.toISOString();
-    const fallbackEnd = defaultEnd ?? addHours(now, 1).toISOString();
+    const fallbackEnd = defaultEnd ?? new Date(now.getTime() + 60 * 60 * 1000).toISOString();
 
     if (!initialEvent) {
       setCalendarId(defaultCalendarId ?? "primary");

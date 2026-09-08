@@ -1,7 +1,6 @@
 "use client";
 
 import { AnimatePresence, animate, motion, useMotionValue, useAnimation, useDragControls, type PanInfo } from "framer-motion";
-import { startOfWeek, endOfWeek, addWeeks, format, isSameWeek } from "date-fns";
 import {
   ChevronLeft,
   ChevronRight,
@@ -26,6 +25,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { addDays, sameDay, weekDays } from "@/lib/calendar-grid";
 import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, Task, TaskImportance } from "@/lib/models";
 import { CANVAS_PENDING_NOTE_KEY } from "@/lib/models";
 import { MilindDoc } from "@/components/milind-doc";
@@ -114,7 +114,8 @@ function saveJson(key: string, value: unknown) {
 }
 
 function weekKey(date: Date) {
-  return format(startOfWeek(date, { weekStartsOn: 0 }), "yyyy-MM-dd");
+  const start = weekDays(date, 0)[0];
+  return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
 }
 
 function eventKey(e: CalendarEvent) {
@@ -694,13 +695,19 @@ export function NodeCanvasView({
 
   /* Current week range */
   const currentWeekStart = useMemo(
-    () => startOfWeek(addWeeks(new Date(), weekOffset), { weekStartsOn: 0 }),
+    () => weekDays(addDays(new Date(), weekOffset * 7), 0)[0],
     [weekOffset]
   );
-  const currentWeekEnd = useMemo(() => endOfWeek(currentWeekStart, { weekStartsOn: 0 }), [currentWeekStart]);
+  /* The last instant of the week, not its first: the filters below are
+   * inclusive `<=` comparisons against event start times. */
+  const currentWeekEnd = useMemo(() => {
+    const end = addDays(currentWeekStart, 6);
+    end.setHours(23, 59, 59, 999);
+    return end;
+  }, [currentWeekStart]);
   const wk = weekKey(currentWeekStart);
 
-  const isCurrentWeek = isSameWeek(new Date(), currentWeekStart, { weekStartsOn: 0 });
+  const isCurrentWeek = sameDay(weekDays(new Date(), 0)[0], currentWeekStart);
 
   /* Filter events for current week */
   const weekEvents = useMemo(() => {
@@ -1195,7 +1202,9 @@ export function NodeCanvasView({
   const visibleWeekEvents = weekEvents.filter((e) => !convertedEventKeys.has(eventKey(e)));
 
   /* Week label */
-  const weekLabel = `${format(currentWeekStart, "MMM d")} – ${format(currentWeekEnd, "MMM d, yyyy")}`;
+  const weekLabel =
+    `${currentWeekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ` +
+    `${currentWeekEnd.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
   const linkSourcePos = linkingFrom ? livePosRef.current[linkingFrom] : null;
 
   /* Separate tasks: free-floating vs attached.

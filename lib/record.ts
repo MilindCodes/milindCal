@@ -33,6 +33,26 @@ import { DEFAULT_SHEET, type SheetData } from "./sheet";
 export type RichBody = Record<string, unknown>;
 
 /**
+ * A fresh record id.
+ *
+ * `crypto.randomUUID` is native everywhere the app runs and replaced the `uuid`
+ * package exactly, but it is only defined in a secure context — a dev server
+ * opened over plain http on a LAN address has no `randomUUID`, and creating a
+ * task there would throw. The fallback is not cryptographic and does not need
+ * to be; it only has to keep the app working on a laptop's second screen.
+ */
+export function newId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16);
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+
+/**
  * Which view the record was last authored in. This is a *presentation hint*
  * for where to open it by default and which icon to show — never a type, and
  * never a gate on what a record can do.
