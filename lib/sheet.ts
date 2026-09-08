@@ -426,3 +426,84 @@ export function redoHistory<T>(history: History<T>, present: T): { history: Hist
     value,
   };
 }
+
+/* ── Fill ─────────────────────────────────────────────────────────── */
+
+/**
+ * Rewrite the A1 references in a formula by a row/column offset.
+ *
+ * This is what makes filling a formula down useful rather than a copy: =A2*2
+ * dragged one row becomes =A3*2. Function names are untouched because the
+ * pattern requires digits after the letters, so SUM( never matches, and a ref
+ * pushed off the grid becomes #REF! the way a spreadsheet does rather than
+ * silently wrapping to the other side.
+ */
+export function shiftFormula(text: string, dRow: number, dCol: number): string {
+  if (!text.startsWith("=")) return text;
+  return (
+    "=" +
+    text.slice(1).replace(/\b([A-Za-z]+)(\d+)\b/g, (whole, letters: string, digits: string) => {
+      const col = columnIndex(letters.toUpperCase());
+      if (col < 0) return whole; // not a column name
+      const row = Number.parseInt(digits, 10) - 1;
+      const nextCol = col + dCol;
+      const nextRow = row + dRow;
+      if (nextCol < 0 || nextRow < 0) return "#REF!";
+      return cellRef(nextRow, nextCol);
+    })
+  );
+}
+
+/**
+ * The step of an arithmetic series, or null when the values are not one.
+ *
+ * Two or more numbers with a constant difference extend as a series; anything
+ * else repeats. A single value has no step by definition — Excel would guess,
+ * and guessing wrong on one cell is more annoying than simply repeating.
+ */
+export function seriesStep(values: readonly string[]): number | null {
+  if (values.length < 2) return null;
+  const nums = values.map((v) => (v.trim() === "" ? NaN : Number(v)));
+  if (nums.some((n) => !Number.isFinite(n))) return null;
+  const step = nums[1] - nums[0];
+  for (let i = 2; i < nums.length; i++) {
+    if (Math.abs(nums[i] - nums[i - 1] - step) > 1e-9) return null;
+  }
+  return step;
+}
+
+/**
+ * Extend a run of values to `count` entries.
+ *
+ * Numbers with a constant step continue it. Formulas are shifted by how far
+ * they have travelled. Everything else — text, lone numbers, mixed content —
+ * repeats in order, which is what a spreadsheet does and what people expect
+ * when they drag a label down a column.
+ */
+export function fillValues(
+  source: readonly string[],
+  count: number,
+  axis: "row" | "col" = "row",
+): string[] {
+  if (source.length === 0 || count <= 0) return [];
+  const step = seriesStep(source);
+  const out: string[] = [];
+  const last = step === null ? 0 : Number(source[source.length - 1]);
+
+  for (let i = 0; i < count; i++) {
+    const from = source[i % source.length];
+    if (step !== null) {
+      out.push(String(last + step * (i + 1)));
+      continue;
+    }
+    if (from.startsWith("=")) {
+      // How far this copy sits from the cell it came from.
+      const travelled = Math.floor(i / source.length) + 1;
+      const shift = travelled * source.length;
+      out.push(shiftFormula(from, axis === "row" ? shift : 0, axis === "col" ? shift : 0));
+      continue;
+    }
+    out.push(from);
+  }
+  return out;
+}

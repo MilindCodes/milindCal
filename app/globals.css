@@ -8995,3 +8995,43 @@ a.primary-button {
   .sheet__cell.is-inrange,
   .sheet__cell.is-inrange.is-axis { background: var(--paper-2); }
 }
+
+/* ── Sheet fill handle ───────────────────────────────────────────────
+ *
+ * The small square at the selection's bottom-right corner. It hangs slightly
+ * outside the cell so it can be grabbed without clipping the value, and sits
+ * above the selection ring so the ring does not draw over it.
+ */
+
+.sheet__fill {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--cherry);
+  border: 1px solid var(--salt);
+  cursor: crosshair;
+  z-index: 4;
+  touch-action: none;
+}
+
+.sheet__fill:hover {
+  transform: scale(1.25);
+}
+
+/* Where the fill would land, shown while the handle is being dragged. A dashed
+ * outline rather than a fill tint, so it reads as "about to happen" and cannot
+ * be mistaken for the selection itself. */
+.sheet__cell.is-fillpreview {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cherry) 55%, transparent);
+  background: color-mix(in srgb, var(--cherry) 5%, var(--salt));
+}
+
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .sheet__cell.is-fillpreview {
+    box-shadow: inset 0 0 0 1px var(--cherry);
+    background: var(--paper-1);
+  }
+}

@@ -18,7 +18,10 @@ import {
   rangeSize,
   rangeToRaw,
   rangeToTSV,
+  fillValues,
   pushHistory,
+  seriesStep,
+  shiftFormula,
   redoHistory,
   undoHistory,
 } from "../lib/sheet.ts";
@@ -156,6 +159,50 @@ const cells = { A1: "1", B1: "2", A2: "3", B2: "=A2*2", C3: "text" };
   const uu = undoHistory(after, "z");
   eq("undoHistory does not mutate its input", after.past.join(","), "x,y");
   eq("undo leaves the caller a fresh history", uu.history.past.join(","), "x");
+}
+
+/* ── Filling ──────────────────────────────────────────────────────── */
+
+{
+  // Shifting references is what separates a fill from a copy.
+  eq("a ref shifts down a row", shiftFormula("=A2*2", 1, 0), "=A3*2");
+  eq("a ref shifts across a column", shiftFormula("=A2*2", 0, 1), "=B2*2");
+  eq("both ends of a range shift", shiftFormula("=SUM(A1:A5)", 2, 0), "=SUM(A3:A7)");
+  eq("a function name is not a reference", shiftFormula("=SUM(A1:A5)", 1, 0).startsWith("=SUM("), true);
+  eq("several refs all shift", shiftFormula("=A1+B2", 1, 0), "=A2+B3");
+  eq("plain text is left alone", shiftFormula("hello", 5, 5), "hello");
+  eq("a number is left alone", shiftFormula("42", 5, 5), "42");
+  // Off the top of the grid is #REF!, not a wrap to the bottom.
+  eq("a ref pushed above row 1 becomes #REF!", shiftFormula("=A1", -1, 0), "=#REF!");
+  eq("a ref pushed left of column A becomes #REF!", shiftFormula("=A1", 0, -1), "=#REF!");
+  eq("multi-letter columns shift", shiftFormula("=AA1", 0, 1), "=AB1");
+
+  // Series detection.
+  eq("a constant difference is a series", seriesStep(["1", "2", "3"]), 1);
+  eq("a larger step is detected", seriesStep(["2", "4", "6"]), 2);
+  eq("a descending series has a negative step", seriesStep(["10", "8", "6"]), -2);
+  eq("an uneven run is not a series", seriesStep(["1", "2", "4"]), null);
+  eq("one value is not a series", seriesStep(["5"]), null);
+  eq("text is not a series", seriesStep(["a", "b"]), null);
+  eq("a blank breaks a series", seriesStep(["1", "", "3"]), null);
+
+  // Filling.
+  eq("a series continues", fillValues(["1", "2", "3"], 3).join(","), "4,5,6");
+  eq("a stepped series continues", fillValues(["2", "4"], 3).join(","), "6,8,10");
+  eq("a descending series continues", fillValues(["10", "8"], 2).join(","), "6,4");
+  eq("a lone number repeats rather than guessing", fillValues(["7"], 3).join(","), "7,7,7");
+  eq("text repeats", fillValues(["Mon"], 3).join(","), "Mon,Mon,Mon");
+  eq("a pattern repeats in order", fillValues(["a", "b"], 4).join(","), "a,b,a,b");
+  eq("nothing to fill from yields nothing", fillValues([], 3).length, 0);
+  eq("filling zero cells yields nothing", fillValues(["1", "2"], 0).length, 0);
+
+  // A formula filled down tracks the row it lands on.
+  eq("one formula fills down with shifting refs",
+     fillValues(["=A1*2"], 3, "row").join(","), "=A2*2,=A3*2,=A4*2");
+  eq("a formula fills across when dragged sideways",
+     fillValues(["=A1*2"], 2, "col").join(","), "=B1*2,=C1*2");
+  eq("a pair of formulas keeps its stride",
+     fillValues(["=A1", "=A2"], 4, "row").join(","), "=A3,=A4,=A5,=A6");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

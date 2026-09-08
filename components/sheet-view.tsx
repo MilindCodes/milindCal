@@ -20,6 +20,7 @@ import {
   cellRef,
   clearRange,
   columnName,
+  fillValues,
   evaluateCell,
   EMPTY_HISTORY,
   normalizeRange,
@@ -70,6 +71,11 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
    * edits and the formula bar act on — the same split every spreadsheet uses. */
   const [anchor, setAnchor] = useState<{ row: number; col: number } | null>(null);
   const selectingRef = useRef(false);
+  /* Filling. The handle at the selection's bottom-right corner extends the
+   * values below or to the right of it. Kept separate from the selection drag
+   * because they start on different elements and mean different things. */
+  const fillingRef = useRef(false);
+  const [fillTo, setFillTo] = useState<{ row: number; col: number } | null>(null);
   /* A copy made inside milindCal should paste back with its formulas intact,
    * but the clipboard only carries text. Keeping the raw grid alongside the
    * text we wrote lets a paste recognise its own copy and restore formulas,
@@ -143,6 +149,48 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
     return true;
   }, [data, onChange]);
 
+  /**
+   * Extend the selection's values to the cell the handle was dragged to.
+   *
+   * One axis at a time, whichever was dragged further — dragging diagonally
+   * and getting a filled rectangle is never what was meant. Each column (or
+   * row) is filled from its own values, so a two-column block keeps both
+   * series rather than repeating the first.
+   */
+  const applyFill = useCallback(
+    (target: { row: number; col: number }) => {
+      const downBy = target.row - range.r1;
+      const rightBy = target.col - range.c1;
+      if (downBy <= 0 && rightBy <= 0) return;
+      const vertical = downBy >= rightBy;
+      const cells = { ...data.cells };
+      const write = (ref: string, v: string) => {
+        if (v === "") delete cells[ref];
+        else cells[ref] = v;
+      };
+
+      if (vertical) {
+        for (let c = range.c0; c <= range.c1; c++) {
+          const source: string[] = [];
+          for (let r = range.r0; r <= range.r1; r++) source.push(data.cells[cellRef(r, c)] ?? "");
+          fillValues(source, downBy, "row").forEach((v, i) => write(cellRef(range.r1 + 1 + i, c), v));
+        }
+      } else {
+        for (let r = range.r0; r <= range.r1; r++) {
+          const source: string[] = [];
+          for (let c = range.c0; c <= range.c1; c++) source.push(data.cells[cellRef(r, c)] ?? "");
+          fillValues(source, rightBy, "col").forEach((v, i) => write(cellRef(r, range.c1 + 1 + i), v));
+        }
+      }
+      commitSheet({ ...data, cells });
+      // Leave the filled block selected, so a wrong guess is one undo or one
+      // Delete away rather than something to hunt down.
+      setAnchor({ row: range.r0, col: range.c0 });
+      setSel(vertical ? { row: target.row, col: range.c1 } : { row: range.r1, col: target.col });
+    },
+    [data, range, commitSheet],
+  );
+
   /** Write one cell. Empty input deletes the key so the map stays sparse. */
   const setCell = useCallback(
     (ref: string, value: string) => {
@@ -187,14 +235,20 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
 
   // The release can land outside the grid, so the listener is on the window.
   useEffect(() => {
-    const stop = () => { selectingRef.current = false; };
+    const stop = () => {
+      selectingRef.current = false;
+      if (fillingRef.current) {
+        fillingRef.current = false;
+        setFillTo((t) => { if (t) applyFill(t); return null; });
+      }
+    };
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
     return () => {
       window.removeEventListener("pointerup", stop);
       window.removeEventListener("pointercancel", stop);
     };
-  }, []);
+  }, [applyFill]);
 
   /* One write on release, not one per pointer move: each write rewrites the
    * localStorage mirror and PATCHes the whole sheet to milindDrive, which is
@@ -484,6 +538,11 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
                     (isSel ? " is-selected" : "") +
                     // Everything else inside a multi-cell selection.
                     (!isSel && hasRange && rangeContains(range, r, c) ? " is-inrange" : "") +
+                    // Cells the fill would land on, shown before it commits.
+                    (fillTo && !rangeContains(range, r, c) &&
+                      r >= range.r0 && r <= Math.max(range.r1, fillTo.row) &&
+                      c >= range.c0 && c <= Math.max(range.c1, fillTo.col)
+                      ? " is-fillpreview" : "") +
                     // Crosshair: the row and column of the selection tint, so
                     // you can trace a cell back to its headers across a wide
                     // grid without counting.
@@ -508,10 +567,24 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
                     setSel({ row: r, col: c });
                   }}
                   onPointerEnter={() => {
+                    if (fillingRef.current) { setFillTo({ row: r, col: c }); return; }
                     if (selectingRef.current) setSel({ row: r, col: c });
                   }}
                   role="gridcell"
                 >
+                  {r === range.r1 && c === range.c1 && !isEditing ? (
+                    <span
+                      aria-hidden="true"
+                      className="sheet__fill"
+                      onPointerDown={(e) => {
+                        if (e.button !== 0) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        fillingRef.current = true;
+                        setFillTo({ row: r, col: c });
+                      }}
+                    />
+                  ) : null}
                   {isEditing ? (
                     <input
                       className="sheet__editor"
