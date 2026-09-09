@@ -45,7 +45,6 @@ async function driveRequest<T>(
 // milindDrive sends null for absent optional fields; MilindDocFile / Task
 // expect undefined.  These convert the wire shape to local types.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toDocFile(d: any): MilindDocFile {
   return {
     id: d.id,
@@ -69,7 +68,6 @@ function toDocFile(d: any): MilindDocFile {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toTask(t: any): Task {
   return {
     id: t.id,

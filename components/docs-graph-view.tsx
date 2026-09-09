@@ -78,7 +78,9 @@ export function DocsGraphView({
   const linkingFromRef = useRef<string | null>(null);
 
   // Force re-render to reflect physics positions (throttled)
-  const [renderTick, setRenderTick] = useState(0);
+  /* Write-only on purpose: the graph draws from refs and imperative SVG
+   * updates, and this exists solely to ask React for a repaint. */
+  const [, setRenderTick] = useState(0);
 
   /* ── Init / sync physics nodes when docs change ── */
   useEffect(() => {

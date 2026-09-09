@@ -3,7 +3,7 @@
 import { MonthGrid, YearGrid } from "@/components/calendar-grid/month-grid";
 import { TimeGrid, type GridEvent } from "@/components/calendar-grid/time-grid";
 import { DEFAULT_AXIS, addDays, monthWeeks, pointToDay, pointToSlot, startOfDay, weekDays } from "@/lib/calendar-grid";
-import { AnimatePresence, animate, motion, useMotionValue, useSpring, useTransform, LayoutGroup } from "framer-motion";
+import { AnimatePresence, animate, motion, useMotionValue, useTransform, LayoutGroup } from "framer-motion";
 import { AlertCircle, AlertTriangle, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, FileText, Layers, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
@@ -14,7 +14,7 @@ import dynamic from "next/dynamic";
 import { CalendarEventTile } from "@/components/calendar-event-tile";
 import { TasksSidebar } from "@/components/tasks-sidebar";
 import { UniversalDragLayer, useUniversalDroppable, type UniversalDropEvent } from "@/components/universal-drag-layer";
-import { entityKey, eventKey, parseEventId, type EntityKey, type UniversalDragPayload } from "@/lib/entity-store";
+import { entityKey, eventKey, parseEventId, type EntityKey } from "@/lib/entity-store";
 import { DEFAULT_SHEET, type SheetData } from "@/lib/sheet";
 import { humanizeError } from "@/lib/errors";
 import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, Task } from "@/lib/models";
@@ -114,30 +114,6 @@ const itemVariants = {
 } as const;
 
 const MONTH_DAY_EVENT_PREVIEW_LIMIT = 5;
-
-// Module-level cache: most calendars share a small set of colors so repeated
-// calls for the same hex are O(1) after the first computation.
-const textColorCache = new Map<string, string>();
-
-function getTextColorForBg(hex: string): string {
-  if (!hex || typeof hex !== "string") return "#f0f4ff";
-  const cached = textColorCache.get(hex);
-  if (cached) return cached;
-  const clean = hex.replace("#", "");
-  if (clean.length < 6) return "#f0f4ff";
-  const r = parseInt(clean.slice(0, 2), 16);
-  const g = parseInt(clean.slice(2, 4), 16);
-  const b = parseInt(clean.slice(4, 6), 16);
-  // Relative luminance (WCAG formula)
-  const toLinear = (c: number) => {
-    const s = c / 255;
-    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
-  const L = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
-  const result = L > 0.35 ? "#1a1a2e" : "#f0f4ff";
-  textColorCache.set(hex, result);
-  return result;
-}
 
 /** Etag-less fallback comparison. Only covers the fields that reach the
  *  rendered tile or the editor's initial state — anything else changing
@@ -335,7 +311,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   // for this single-shot raise-on-pending behavior.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingOpenDocId, docsVisible]);
-  const [docsExitMode, setDocsExitMode] = useState<"normal" | "to-calendar">("normal");
   const [editorEntranceFrom, setEditorEntranceFrom] = useState<"side" | "doc">("side");
   const docPendingTitleRef = useRef<string>("");
   const docPendingDescriptionRef = useRef<string>("");
@@ -526,7 +501,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const handleDocAddToCalendar = useCallback((title: string, description: string) => {
     docPendingTitleRef.current = title;
     docPendingDescriptionRef.current = description;
-    setDocsExitMode("to-calendar");
     setEditorEntranceFrom("doc");
     closeDocs();
     setEditingEvent(null);
@@ -537,7 +511,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     // Open editor after the docs exit spring settles (~260ms for stiffness:420 damping:32)
     setTimeout(() => {
       setEventEditorOpen(true);
-      setDocsExitMode("normal");
     }, 260);
   }, [closeDocs]);
 

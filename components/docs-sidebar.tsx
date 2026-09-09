@@ -592,7 +592,7 @@ export function DocsSidebar({
                     <motion.div key={group.label} className="gd-date-group" layout>
                       <div className="gd-date-group__label">{group.label}</div>
                       <AnimatePresence mode="popLayout">
-                        {group.docs.map((doc, i) => renderDocItem(doc, filtered.indexOf(doc)))}
+                        {group.docs.map((doc) => renderDocItem(doc, filtered.indexOf(doc)))}
                       </AnimatePresence>
                     </motion.div>
                   ))

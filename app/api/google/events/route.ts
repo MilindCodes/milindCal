@@ -101,7 +101,6 @@ export async function GET(req: Request) {
       let pageToken: string | undefined = undefined;
 
       while (true) {
-        // eslint-disable-next-line no-await-in-loop
         const page: { data: calendar_v3.Schema$Events } = await calendar.events.list({
           calendarId,
           singleEvents: true,
