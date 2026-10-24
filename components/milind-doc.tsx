@@ -54,6 +54,7 @@ import {
 import { BacklinksList } from "@/components/backlinks-list";
 import { useEntityActions } from "@/components/entity-store-context";
 import { toDateOnly, toDateTimeLocal } from "@/lib/datetime";
+import { flushableDebounce } from "@/lib/debounce";
 import { entityKey } from "@/lib/entity-store";
 import type { MilindDocCalendarMeta, MilindDocFile, Task } from "@/lib/models";
 
@@ -786,7 +787,10 @@ export function MilindDoc({
   onToggleFocusMode,
 }: MilindDocProps) {
   const { addTask } = useEntityActions();
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /* Autosave. A flushable debounce rather than a bare timer, because the
+   * pending save has to survive the editor going away — see lib/debounce. */
+  const [saveDebounce] = useState(() => flushableDebounce(500));
+  const unmountingRef = useRef(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
   const [calMetaDraft, setCalMetaDraft] = useState<MilindDocCalendarMeta | null>(doc.calendarMeta ?? null);
   const [titleDraft, setTitleDraft] = useState(doc.title || "Untitled");
@@ -939,8 +943,11 @@ export function MilindDoc({
     content: doc.content ?? undefined,
     onUpdate: ({ editor: e }) => {
       scheduleWordCount(e);
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => {
+      // Which document this edit belongs to is fixed *now*, at the keystroke.
+      // Reading docRef when the save fires instead would attribute the edit to
+      // whatever document is open by then.
+      const forDoc = docRef.current;
+      saveDebounce.schedule(() => {
         const content = e.getJSON() as Record<string, unknown>;
         const extractedTitle = extractTitle(e);
         const title = (titleDraftRef.current && titleDraftRef.current !== "Untitled")
@@ -948,17 +955,20 @@ export function MilindDoc({
           : extractedTitle;
         const links = extractMentionIds(content);
         const updated: MilindDocFile = {
-          ...docRef.current,
+          ...forDoc,
           content,
           title,
           links,
           updatedAt: Date.now(),
         };
         onSaveRef.current(updated);
+        // No "Saved" flash on the way out: there is no one left to see it, and
+        // its timer would outlive the component.
+        if (unmountingRef.current) return;
         setSavedFeedback(true);
         if (savedFeedbackTimerRef.current) clearTimeout(savedFeedbackTimerRef.current);
         savedFeedbackTimerRef.current = setTimeout(() => setSavedFeedback(false), 2000);
-      }, 500);
+      });
     },
   }, []);
 
@@ -972,18 +982,31 @@ export function MilindDoc({
     const currentJson = JSON.stringify(editor.getJSON());
     const docJson = JSON.stringify(doc.content ?? {});
     if (currentJson !== docJson) {
-      editor.commands.setContent(doc.content ?? "");
+      // The outgoing document's last edit is still in the editor right now;
+      // save it before its content is replaced.
+      saveDebounce.flush();
+      // Loading a document is not editing it. With the default emitUpdate the
+      // swap fired onUpdate and scheduled a save of a document nobody had
+      // touched, bumping its updatedAt and syncing it to Google.
+      editor.commands.setContent(doc.content ?? "", { emitUpdate: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.id, editor]);
 
   useEffect(() => {
+    // Reset on every mount: StrictMode rehearses an unmount in development, and
+    // a flag left true from that would silence the "Saved" indicator for good.
+    unmountingRef.current = false;
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      // Save, don't discard. Switching documents unmounts the editor, and this
+      // used to clear the pending save — so anything typed in the last 500ms
+      // before clicking another document was lost.
+      unmountingRef.current = true;
+      saveDebounce.flush();
       if (savedFeedbackTimerRef.current) clearTimeout(savedFeedbackTimerRef.current);
       if (wordCountTimerRef.current) clearTimeout(wordCountTimerRef.current);
     };
-  }, []);
+  }, [saveDebounce]);
 
   const handleTitleBlur = useCallback(() => {
     const newTitle = titleDraft.trim() || "Untitled";
