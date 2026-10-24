@@ -586,7 +586,9 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         return parsed.id;
       }
 
-      // Reuse an existing linked doc if one already exists.
+      // Reuse an existing linked doc if one already exists. Kept for docs that
+      // were created by the old create-and-link path below, so nothing anyone
+      // already wrote is stranded.
       const existingDocKey = neighbors(linksRef.current, key).find((n) =>
         n.startsWith("doc:"),
       );
@@ -594,6 +596,35 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         const existingId = existingDocKey.slice("doc:".length);
         setPendingOpenDocId(existingId);
         return existingId;
+      }
+
+      /* A task opens as a doc by becoming one — the same record gaining a
+       * body — exactly as dragging it onto the docs panel already does.
+       *
+       * This used to fall through to the code below: mint a second record,
+       * seed it with the task's text, and join the two with a link edge. So
+       * the button and the drag, which mean the same thing, produced different
+       * data, and the button's version drifted: rename the task and the doc
+       * kept the old title.
+       *
+       * Written through updateTask plus the facet mirror rather than
+       * updateRecord, which is declared further down this component and cannot
+       * appear in this callback's dependencies. For a body, the two lines below
+       * are exactly what updateRecord's task branch does. */
+      if (parsed.kind === "task") {
+        const task = tasksRef.current.find((t) => t.id === parsed.id);
+        if (task) {
+          if (task.body === undefined || task.body === null) {
+            const text = seed?.description?.trim() || task.description?.trim();
+            const body: Record<string, unknown> = text
+              ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] }
+              : { type: "doc", content: [] };
+            writeFacetRescue(task.id, { body }, RESCUED_TASK_FIELDS);
+            updateTask(task.id, { body });
+          }
+          setPendingOpenDocId(task.id);
+          return task.id;
+        }
       }
 
       // Create a new doc seeded from the source entity.
@@ -644,7 +675,7 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
 
       return newDoc.id;
     },
-    [setDocs, setLinks],
+    [setDocs, setLinks, updateTask],
   );
 
   /* ── Facet projections ────────────────────────────────────────────
