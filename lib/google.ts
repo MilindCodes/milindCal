@@ -102,6 +102,46 @@ export function mapClientEventToGoogle(payload: GoogleEventPayload) {
   };
 }
 
+/**
+ * Map a PATCH: forward only the fields the caller actually sent.
+ *
+ * `events.patch` treats every key in the body as an instruction, so
+ * `attendees: []` does not mean "no change to the guests" — it means "remove
+ * them all". The full mapper above is right for creating an event and for the
+ * editor, which sends every field on purpose. It was wrong for everything
+ * else: three callers that only meant to update a title, a description or a
+ * time sent `attendees: []`, `recurrence: []` and `colorId: "9"` alongside, so
+ * typing into a doc linked to a meeting emptied that meeting's guest list, and
+ * dragging an adopted event recoloured it.
+ *
+ * Here an omitted key is a preserved field. A caller that sends every key gets
+ * byte-for-byte the same body as `mapClientEventToGoogle`.
+ */
+export function mapClientEventPatchToGoogle(payload: Partial<GoogleEventPayload>) {
+  const out: Record<string, unknown> = {};
+  if (payload.title !== undefined) out.summary = payload.title;
+  if (payload.description !== undefined) out.description = payload.description;
+  if (payload.location !== undefined) out.location = payload.location;
+  if (payload.start !== undefined) {
+    out.start = payload.allDay
+      ? { date: payload.start.split("T")[0] }
+      : { dateTime: payload.start, timeZone: payload.timeZone };
+  }
+  if (payload.end !== undefined) {
+    out.end = payload.allDay
+      ? { date: payload.end.split("T")[0] }
+      : { dateTime: payload.end, timeZone: payload.timeZone };
+  }
+  if (payload.attendees !== undefined) out.attendees = payload.attendees.map((email) => ({ email }));
+  if (payload.recurrence !== undefined) out.recurrence = payload.recurrence;
+  if (payload.reminders !== undefined) out.reminders = payload.reminders;
+  if (payload.colorId !== undefined) out.colorId = payload.colorId;
+  if (payload.eventType !== undefined) {
+    out.extendedProperties = { private: { eventType: payload.eventType } };
+  }
+  return out;
+}
+
 function getHeaderValue(headers: Array<{ name?: string | null; value?: string | null }> | undefined, key: string) {
   if (!headers) return "";
   const found = headers.find((header) => header.name?.toLowerCase() === key.toLowerCase());

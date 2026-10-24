@@ -258,23 +258,22 @@ export function MilindDocsSection({
   const handleSyncCalendarMeta = useCallback(async (meta: MilindDocCalendarMeta) => {
     const doc = docs.find((d) => d.calendarMeta?.eventId === meta.eventId);
     const description = doc ? tiptapToPlainText(doc.content) : "";
-    void fetch(`/api/google/events/${meta.eventId}`, {
+    void fetch(`/api/google/events/${encodeURIComponent(meta.eventId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         calendarId: meta.calendarId,
+        // Only what a doc owns. This runs on autosave, and it used to send
+        // `attendees: []`, `recurrence: []` and `colorId: "9"` too — so typing
+        // one character into a doc linked to a meeting emptied the meeting's
+        // guest list two seconds later. Leaving a key out now preserves it.
         event: {
           title: meta.title,
           description,
-          location: meta.location ?? "",
+          location: meta.location,
           start: meta.start,
           end: meta.end,
           allDay: meta.allDay,
-          attendees: [],
-          recurrence: [],
-          reminders: { useDefault: true, overrides: [] },
-          eventType: "meeting",
-          colorId: "9",
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
       }),

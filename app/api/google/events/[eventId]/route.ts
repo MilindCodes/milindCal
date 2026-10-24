@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getCalendarClient, mapClientEventToGoogle, mapGoogleEventToClient } from "@/lib/google";
+import { getCalendarClient, mapClientEventPatchToGoogle, mapGoogleEventToClient } from "@/lib/google";
 import type { GoogleEventPayload } from "@/lib/models";
 import { touchUserSync } from "@/lib/watch-store";
 
@@ -47,7 +47,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ eventId: 
 
   const body = await req.json();
   const calendarId = body.calendarId;
-  const event = body.event as GoogleEventPayload;
+  // Partial on purpose: a key the client leaves out is a field Google keeps.
+  const event = body.event as Partial<GoogleEventPayload>;
 
   if (!calendarId || !event || !eventId) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -58,8 +59,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ eventId: 
     const updated = await calendar.events.patch({
       calendarId,
       eventId,
-      sendUpdates: event.attendees.length ? "all" : "none",
-      requestBody: mapClientEventToGoogle(event)
+      // Only email guests when the caller is managing the guest list. A time
+      // or title change with no attendees key leaves them, and their inboxes,
+      // alone — which is also what it did before, minus deleting them.
+      sendUpdates: event.attendees?.length ? "all" : "none",
+      requestBody: mapClientEventPatchToGoogle(event)
     });
 
     // The event is already updated on Google's side at this point — don't let a

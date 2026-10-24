@@ -17,7 +17,7 @@ import { UniversalDragLayer, useUniversalDroppable, type UniversalDropEvent } fr
 import { entityKey, eventKey, parseEventId, type EntityKey } from "@/lib/entity-store";
 import { DEFAULT_SHEET, type SheetData } from "@/lib/sheet";
 import { humanizeError } from "@/lib/errors";
-import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, Task } from "@/lib/models";
+import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, SaveEventInput, Task } from "@/lib/models";
 
 /* ── Lazily-loaded heavy views ──
  *
@@ -537,6 +537,8 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           calendarId,
+          // The fields a doc owns, and nothing else: an omitted key is one
+          // Google keeps. See mapClientEventPatchToGoogle.
           event: {
             title: eventPayload.title,
             description,
@@ -544,11 +546,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
             start: eventPayload.start,
             end: eventPayload.end,
             allDay: eventPayload.allDay,
-            attendees: [],
-            recurrence: [],
-            reminders: { useDefault: true, overrides: [] },
-            eventType: "meeting",
-            colorId: "9",
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           },
         }),
@@ -1486,7 +1483,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   // visibly janking pointer input on larger weeks. The cursor-trail dot alone
   // is enough of a cursor-tracking flourish.
 
-  const saveEvent = async (payload: { calendarId: string; event: GoogleEventPayload; eventId?: string }) => {
+  const saveEvent = async (payload: SaveEventInput) => {
     try {
       const { calendarId, event, eventId } = payload;
 
@@ -1572,18 +1569,14 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             calendarId: task.googleCalendarId,
+            // A drag changes when, and only when. This used to send the
+            // title, a blank location, `attendees: []`, `recurrence: []` and
+            // `colorId: "9"` as well, so moving an adopted meeting on the grid
+            // stripped its guests and recoloured it in Google Calendar.
             event: {
-              title: task.title,
-              description: task.description ?? "",
-              location: "",
               start: change.event.startStr,
               end: change.event.endStr || change.event.startStr,
               allDay: change.event.allDay,
-              attendees: [],
-              recurrence: [],
-              reminders: { useDefault: true, overrides: [] },
-              eventType: "meeting",
-              colorId: "9",
               timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             },
           }),

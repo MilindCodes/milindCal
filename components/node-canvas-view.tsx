@@ -26,7 +26,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { addDays, sameDay, weekDays } from "@/lib/calendar-grid";
-import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, Task, TaskImportance } from "@/lib/models";
+import type { CalendarEvent, CalendarSummary, MilindDocFile, PanelNote, SaveEventInput, Task, TaskImportance } from "@/lib/models";
 import { CANVAS_PENDING_NOTE_KEY } from "@/lib/models";
 import { MilindDoc } from "@/components/milind-doc";
 import { useDocs, useEntityActions, useTasks } from "@/components/entity-store-context";
@@ -48,11 +48,7 @@ interface MilindNote {
 interface NodeCanvasViewProps {
   events: CalendarEvent[];
   calendars: CalendarSummary[];
-  onSaveEvent: (payload: {
-    calendarId: string;
-    event: GoogleEventPayload;
-    eventId?: string;
-  }) => Promise<void>;
+  onSaveEvent: (payload: SaveEventInput) => Promise<void>;
   onOpenEvent: (event: CalendarEvent) => void;
 }
 
@@ -1154,18 +1150,16 @@ export function NodeCanvasView({
       void onSaveEvent({
         calendarId,
         eventId,
+        // Only the fields a doc owns — an omitted key is one Google keeps. The
+        // empty arrays and fixed colour that used to ride along here deleted
+        // the event's guests and recurrence on every canvas save.
         event: {
           title,
           description,
-          location: location ?? "",
+          location,
           start,
           end,
           allDay,
-          attendees: [],
-          recurrence: [],
-          reminders: { useDefault: true, overrides: [] },
-          eventType: "meeting",
-          colorId: "9",
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
       });

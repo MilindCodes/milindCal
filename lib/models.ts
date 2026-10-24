@@ -78,6 +78,19 @@ export interface GoogleEventPayload {
   timeZone: string;
 }
 
+/**
+ * What saving an event sends to Google.
+ *
+ * Creating needs the whole event. Updating needs only what changed, because a
+ * PATCH treats every key it is given as an instruction — `attendees: []` means
+ * "remove the guests", not "no change". Spelling the two apart in the type means
+ * a partial payload cannot reach the create route, and an update is never
+ * forced to invent values for fields it has no business touching.
+ */
+export type SaveEventInput =
+  | { calendarId: string; event: GoogleEventPayload; eventId?: undefined }
+  | { calendarId: string; event: Partial<GoogleEventPayload>; eventId: string };
+
 export const GOOGLE_EVENT_COLORS = [
   { id: "1",  hex: "#a4bdfc", name: "Lavender" },
   { id: "2",  hex: "#7ae7bf", name: "Sage" },
