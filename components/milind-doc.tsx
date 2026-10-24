@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { useEditor, EditorContent, type Editor, ReactRenderer } from "@tiptap/react";
+import { useEditor, useEditorState, EditorContent, type Editor, ReactRenderer } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
@@ -562,6 +562,24 @@ function extractMentionIds(content: Record<string, unknown> | null): string[] {
   return [...new Set(ids)];
 }
 
+/* ── Selection bubble menu ─────────────────────────────────────── */
+
+/* Module-level on purpose. @tiptap/react's BubbleMenu dispatches an
+ * "updateOptions" transaction whenever `options` or `shouldShow` changes
+ * identity, and these were written inline, so every render of the editor
+ * component dispatched a transaction — after each autosave's "Saved" flash,
+ * on every toolbar state change. That is wasted work on its own, and worse:
+ * a transaction is what makes the @-mention plugin re-scan the text before
+ * the caret, so a suggestion dismissed with Escape came straight back and the
+ * next Enter inserted a mention instead of starting a paragraph. */
+const BUBBLE_MENU_OPTIONS = { placement: "top", offset: 8 } as const;
+
+function bubbleMenuShouldShow({ editor, from, to }: { editor: Editor; from: number; to: number }) {
+  // Only for a real range, and never inside a code block, where inline marks
+  // don't apply.
+  return from !== to && !editor.isActive("codeBlock");
+}
+
 /* ── Paragraph style dropdown ──────────────────────────────────── */
 
 interface StyleDropdownProps {
@@ -588,6 +606,9 @@ function StyleDropdown({ editor }: StyleDropdownProps) {
     return () => document.removeEventListener("mousedown", handleOut);
   }, [open]);
 
+  /* `setHeading`, not `toggleHeading`. A style menu sets the style you pick:
+   * choosing "Heading 2" while already in a Heading 2 used to toggle it off
+   * into body text, which no document editor does. */
   const styles = [
     {
       label: "Normal text",
@@ -597,17 +618,17 @@ function StyleDropdown({ editor }: StyleDropdownProps) {
     {
       label: "Heading 1",
       className: "gd-style-option--h1",
-      action: () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
+      action: () => editor.chain().focus().setHeading({ level: 1 }).run(),
     },
     {
       label: "Heading 2",
       className: "gd-style-option--h2",
-      action: () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
+      action: () => editor.chain().focus().setHeading({ level: 2 }).run(),
     },
     {
       label: "Heading 3",
       className: "gd-style-option--h3",
-      action: () => editor.chain().focus().toggleHeading({ level: 3 }).run(),
+      action: () => editor.chain().focus().setHeading({ level: 3 }).run(),
     },
   ];
 
@@ -925,10 +946,15 @@ export function MilindDoc({
                 }
               },
               onKeyDown: (props: SuggestionKeyDownProps) => {
-                if (props.event.key === "Escape") {
-                  popupEl?.remove();
-                  return true;
-                }
+                /* Escape is the plugin's to handle, not ours. Returning true
+                 * tells @tiptap/suggestion that we closed the suggestion
+                 * ourselves, so it skips onExit and never clears its state.
+                 * This used to remove the popup and return true: the list
+                 * vanished, the suggestion stayed active, the renderer was
+                 * never destroyed, and the next Enter went to an invisible
+                 * list instead of starting a new paragraph. Returning false
+                 * lets the plugin run onExit below and reset itself. */
+                if (props.event.key === "Escape") return false;
                 return renderer.ref?.onKeyDown(props) ?? false;
               },
               onExit: () => {
@@ -971,6 +997,41 @@ export function MilindDoc({
       });
     },
   }, []);
+
+  /* The toolbar's live state.
+   *
+   * TipTap v3's useEditor stopped re-rendering on every transaction, and every
+   * toolbar button here reads `editor.isActive(...)` during render — so they
+   * only refreshed when something unrelated re-rendered this component, like
+   * the "Saved" flash half a second after typing stopped. Click into bold text
+   * without typing and Bold did not light up; the style dropdown said "Normal
+   * text" with the caret inside a heading.
+   *
+   * This subscribes to exactly those flags. useEditorState compares the
+   * selected object by value, so the component re-renders when a flag flips —
+   * the caret entering a heading, leaving a link — and not on each keystroke.
+   * The existing isActive reads then come back fresh; this value itself is
+   * only the trigger. */
+  const _toolbarFlags = useEditorState({
+    editor,
+    selector: ({ editor: e }) =>
+      e
+        ? {
+            bold: e.isActive("bold"),
+            italic: e.isActive("italic"),
+            underline: e.isActive("underline"),
+            strike: e.isActive("strike"),
+            code: e.isActive("code"),
+            link: e.isActive("link"),
+            heading: [1, 2, 3].find((level) => e.isActive("heading", { level })) ?? 0,
+            align: (["left", "center", "right", "justify"] as const).find((a) => e.isActive({ textAlign: a })) ?? null,
+            bulletList: e.isActive("bulletList"),
+            orderedList: e.isActive("orderedList"),
+            blockquote: e.isActive("blockquote"),
+            codeBlock: e.isActive("codeBlock"),
+          }
+        : null,
+  });
 
   // Initialize word count on mount / doc change
   useEffect(() => {
@@ -1177,12 +1238,8 @@ export function MilindDoc({
           * only reachable by hover. */}
         <BubbleMenu
           editor={editor}
-          options={{ placement: "top", offset: 8 }}
-          shouldShow={({ editor: ed, from, to }) =>
-            // Only for a real range, and never inside a code block, where
-            // inline marks don't apply.
-            from !== to && !ed.isActive("codeBlock")
-          }
+          options={BUBBLE_MENU_OPTIONS}
+          shouldShow={bubbleMenuShouldShow}
         >
           <div className="gd-bubble">
             <button
