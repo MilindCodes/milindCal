@@ -127,6 +127,25 @@ export function DocsGraphView({
   }, [docs]);
 
   /* ── Physics simulation ── */
+  /* Declared before tickPhysics so tickPhysics can list it as a dependency.
+   * Below it, naming it there would read the binding before it exists. */
+  const updateSvgEdges = useCallback(() => {
+    if (!svgRef.current) return;
+    const nodeMap = new Map(nodesRef.current.map((n) => [n.id, n]));
+    svgRef.current.querySelectorAll<SVGLineElement>(".physics-edge").forEach((line) => {
+      const fromId = line.dataset.from!;
+      const toId = line.dataset.to!;
+      const a = nodeMap.get(fromId);
+      const b = nodeMap.get(toId);
+      if (a && b) {
+        line.setAttribute("x1", String(a.x));
+        line.setAttribute("y1", String(a.y));
+        line.setAttribute("x2", String(b.x));
+        line.setAttribute("y2", String(b.y));
+      }
+    });
+  }, []);
+
   const tickPhysics = useCallback(() => {
     const nodes = nodesRef.current;
     if (nodes.length === 0) return false;
@@ -198,24 +217,7 @@ export function DocsGraphView({
     updateSvgEdges();
 
     return maxSpeed > MIN_SPEED;
-  }, [getEdges]);
-
-  const updateSvgEdges = useCallback(() => {
-    if (!svgRef.current) return;
-    const nodeMap = new Map(nodesRef.current.map((n) => [n.id, n]));
-    svgRef.current.querySelectorAll<SVGLineElement>(".physics-edge").forEach((line) => {
-      const fromId = line.dataset.from!;
-      const toId = line.dataset.to!;
-      const a = nodeMap.get(fromId);
-      const b = nodeMap.get(toId);
-      if (a && b) {
-        line.setAttribute("x1", String(a.x));
-        line.setAttribute("y1", String(a.y));
-        line.setAttribute("x2", String(b.x));
-        line.setAttribute("y2", String(b.y));
-      }
-    });
-  }, []);
+  }, [getEdges, updateSvgEdges]);
 
   const kickSimulation = useCallback(() => {
     if (isSimulatingRef.current) return;

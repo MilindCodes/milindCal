@@ -125,6 +125,13 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
 
   /** The single write path. Recording here rather than at each call site is
    *  what stops a new mutation quietly being un-undoable. */
+  /* Every edit goes through this, and the hooks below list it — not its own
+   * dependencies — in theirs. They used to list `data` and `onChange` instead,
+   * which was correct only because those happen to be exactly what this
+   * depends on: give it one more dependency and five handlers would have kept
+   * calling a stale copy, recording the wrong prior state for undo and writing
+   * through an `onChange` bound to whichever sheet was open when they were
+   * made. Naming the function makes that impossible rather than unlikely. */
   const commitSheet = useCallback(
     (next: SheetData) => {
       historyRef.current = pushHistory(historyRef.current, data);
@@ -199,7 +206,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
       else cells[ref] = value;
       commitSheet({ ...data, cells });
     },
-    [data, onChange],
+    [data, commitSheet],
   );
 
   const commit = useCallback(
@@ -283,7 +290,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);
     };
-  }, [resizing, data, onChange]);
+  }, [resizing, data, commitSheet]);
 
   /* ── Grid keyboard model ──────────────────────────────────────────
    * Handled on the grid container rather than per-cell so arrow keys work
@@ -345,7 +352,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
         beginEdit(sel.row, sel.col, key);
       }
     },
-    [editing, data, beginEdit, setCell, activeRef, sel.row, sel.col, hasRange, range, onChange],
+    [editing, data, beginEdit, setCell, activeRef, sel.row, sel.col, hasRange, range, commitSheet, undo, redo],
   );
 
   const onCellInputKey = useCallback(
@@ -374,7 +381,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
       onCopy(e);
       commitSheet({ ...data, cells: clearRange(data.cells, range) });
     },
-    [editing, onCopy, onChange, data, range],
+    [editing, onCopy, commitSheet, data, range],
   );
 
   const onPaste = useCallback(
@@ -397,7 +404,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
         col: Math.min(sel.col + cols - 1, data.cols - 1),
       });
     },
-    [editing, data, onChange, sel.row, sel.col],
+    [editing, data, commitSheet, sel.row, sel.col],
   );
 
   const onFormulaKey = useCallback(
