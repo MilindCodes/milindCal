@@ -324,6 +324,16 @@ export function recordFromDoc(d: MilindDocFile): MilindRecord {
     links: d.links ?? [],
     graphPos: d.graphPos,
     nodeColor: d.nodeColor,
+    // The task and sheet facets a doc can grow. Leaving these out meant the
+    // record space never saw them: a doc dropped on the spreadsheet stored its
+    // sheet, the sheet view searched the records, found nothing, opened an
+    // empty grid — and the first keystroke minted a second record, orphaning
+    // the doc's sheet. A completed doc on the calendar rendered as open.
+    status: d.completed === undefined ? undefined : d.completed ? "done" : "open",
+    importance: d.importance,
+    dueDate: d.dueDate,
+    columnId: d.columnId,
+    sheet: d.sheet,
     // A doc converted from an event already carried its schedule in
     // calendarMeta — in the unified model that is simply the record's own
     // start/end plus its Google projection.
@@ -350,6 +360,12 @@ export function docFromRecord(r: MilindRecord): MilindDocFile {
     links: r.links,
     graphPos: r.graphPos,
     nodeColor: r.nodeColor,
+    // The inverse of recordFromDoc, facet for facet.
+    completed: r.status === undefined ? undefined : r.status === "done",
+    importance: r.importance,
+    dueDate: r.dueDate,
+    columnId: r.columnId,
+    sheet: r.sheet,
     ...(r.google && r.start && r.end
       ? {
           calendarMeta: {

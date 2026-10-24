@@ -260,9 +260,17 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
    * writes back through updateRecord, so the grid is not a separate document
    * — it is one more face of a record that may also be scheduled or on the
    * board. */
+  /* Which record the sheet view is showing. It used to be "the first record
+   * that has a sheet", so dropping a second item onto the spreadsheet opened
+   * the first one and typing went into the wrong grid. The drop now says which
+   * record it means; opening the view any other way still falls back to the
+   * first sheet so it is never a dead end. */
+  const [activeSheetId, setActiveSheetId] = useState<string | null>(null);
   const activeSheetRecord = useMemo(
-    () => records.find((r) => r.sheet !== undefined),
-    [records],
+    () =>
+      records.find((r) => r.id === activeSheetId && r.sheet !== undefined)
+      ?? records.find((r) => r.sheet !== undefined),
+    [records, activeSheetId],
   );
 
   const handleSheetChange = useCallback(
@@ -276,12 +284,16 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       // Deliberately no `completed`: this record is only a sheet. Giving it a
       // completion state would put it on the task board, which is exactly the
       // conflation the facet model exists to avoid.
+      const id = Math.random().toString(36).slice(2, 10);
       addTask({
-        id: Math.random().toString(36).slice(2, 10),
+        id,
         title: "Untitled sheet",
         createdAt: Date.now(),
         sheet: next,
       });
+      // The next keystroke belongs to the sheet just made, not to whichever
+      // record happens to come first.
+      setActiveSheetId(id);
     },
     [activeSheetRecord, updateRecord, addTask],
   );
@@ -614,6 +626,10 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
    * current list without being re-created on every task edit. */
   const tasksRef = useRef<Task[]>(tasks);
   useEffect(() => { tasksRef.current = tasks; });
+  // Read by the drop handler, which stays referentially stable across polling
+  // re-renders and so cannot close over `records` directly.
+  const recordsRef = useRef(records);
+  useEffect(() => { recordsRef.current = records; });
 
   const handleUniversalDrop = useCallback(
     (evt: UniversalDropEvent) => {
@@ -783,7 +799,14 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
        * Same record — the sheet is a face, not a container. */
       if (target.targetKind === "sheet") {
         if (source.kind === "event") return; // Google events adopt via the board first.
-        updateRecord(source.id, { sheet: { ...DEFAULT_SHEET, cells: {} } });
+        // Seed a grid only if the record has none. This always wrote an empty
+        // sheet, so dropping something that already had a filled spreadsheet
+        // onto the sheet view wiped it.
+        const existing = recordsRef.current.find((r) => r.id === source.id);
+        if (!existing?.sheet) {
+          updateRecord(source.id, { sheet: { ...DEFAULT_SHEET, cells: {} } });
+        }
+        setActiveSheetId(source.id);
         setView("sheet");
         return;
       }

@@ -221,5 +221,41 @@ t('a plain task opens on the board', opensAsDoc(base({ affinity: 'task' })), fal
 t('a task that grew a body opens as a doc', opensAsDoc(base({ affinity: 'task', body: { type: 'doc' } })), true);
 t('a doc with no body yet is still a doc', opensAsDoc(base({ affinity: 'doc', body: null })), true);
 
+/* ── A doc keeps every facet it grows ─────────────────────────────── */
+{
+  const grid = { cells: { A1: '1', A2: '=A1*2' }, rows: 10, cols: 4 };
+  const grown = {
+    id: 'd3', title: 'Budget', content: { type: 'doc' },
+    createdAt: 1, updatedAt: 1, links: [],
+    completed: true, importance: 'high', dueDate: '2026-09-30', columnId: 'high',
+    sheet: grid,
+  };
+  const r = recordFromDoc(grown);
+
+  // The sheet view finds its record with records.find(r => r.sheet).
+  t('a doc that grew a sheet has one in the record space', hasSheet(r), true);
+  t('and it is the doc\'s own sheet', r.sheet, grid);
+  t('a completed doc is done', isDone(r), true);
+  t('a doc with a completion state is actionable', isActionable(r), true);
+  t('importance survives', r.importance, 'high');
+  t('due date survives', r.dueDate, '2026-09-30');
+  t('board column survives', r.columnId, 'high');
+  t('it is a doc, a task and a sheet at once', facetsOf(r), ['task', 'doc', 'sheet']);
+
+  const back = docFromRecord(r);
+  t('round trip keeps the sheet', back.sheet, grid);
+  t('round trip keeps completion', back.completed, true);
+  t('round trip keeps importance, due date and column',
+    [back.importance, back.dueDate, back.columnId], ['high', '2026-09-30', 'high']);
+
+  // Absent stays absent: a plain doc must not become a task by round-tripping.
+  const plain = recordFromDoc({ id: 'd4', title: 'Notes', content: { type: 'doc' }, createdAt: 1, updatedAt: 1, links: [] });
+  t('a plain doc is not actionable', isActionable(plain), false);
+  t('a plain doc has no sheet', hasSheet(plain), false);
+  t('and round-trips without gaining a completion state', docFromRecord(plain).completed, undefined);
+  t('an open doc reads as open, not absent',
+    recordFromDoc({ id: 'd5', title: 'x', content: null, createdAt: 1, updatedAt: 1, links: [], completed: false }).status, 'open');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
