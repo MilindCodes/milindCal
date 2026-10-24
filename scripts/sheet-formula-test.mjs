@@ -52,6 +52,9 @@ console.log(`${okp?'✓':'✗'} parseRef/cellRef round-trip AA12`);
   t2('SUM still skips text', ev({ A1: '1', A2: 'x', A3: '3', B1: '=SUM(A1:A3)' }, 'B1'), 4);
   t2('a blank in arithmetic is still 0', ev({ A1: '5', B1: '=A1+A2' }, 'B1'), 5);
   t2('an error inside a range still propagates', ev({ A1: '=1/0', A2: '2', B1: '=SUM(A1:A2)' }, 'B1'), '#DIV/0!');
+  // COUNT is the exception: it counts numbers, and an error is not one.
+  t2('COUNT skips an error in its range, as Excel and Sheets do', ev({ A1: '=1/0', A2: '2', A3: '3', B1: '=COUNT(A1:A3)' }, 'B1'), 2);
+  t2('MAX still propagates an error in its range', ev({ A1: '=1/0', A2: '2', B1: '=MAX(A1:A2)' }, 'B1'), '#DIV/0!');
   t2('a cell of spaces is blank, not zero', ev({ A1: '4', A2: '   ', B1: '=AVERAGE(A1:A2)' }, 'B1'), 4);
 }
 

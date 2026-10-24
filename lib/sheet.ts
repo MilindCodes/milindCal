@@ -210,11 +210,21 @@ function evaluateExpression(input: string, ctx: EvalContext): number {
     throw new Error("#VALUE!");
   }
 
-  /** The numbers among some referenced cells; blanks and text are skipped. */
-  function numbersIn(refs: string[]): number[] {
+  /**
+   * The numbers among some referenced cells; blanks and text are skipped.
+   * An error in a referenced cell propagates — SUM over a range holding
+   * #DIV/0! is #DIV/0! — unless `skipErrors`, which only COUNT asks for.
+   */
+  function numbersIn(refs: string[], skipErrors = false): number[] {
     const out: number[] = [];
     for (const ref of refs) {
-      const operand = readCell(ref.toUpperCase(), ctx);
+      let operand: Operand;
+      try {
+        operand = readCell(ref.toUpperCase(), ctx);
+      } catch (err) {
+        if (skipErrors) continue;
+        throw err;
+      }
       if (typeof operand === "number") out.push(operand);
     }
     return out;
@@ -244,10 +254,14 @@ function evaluateExpression(input: string, ctx: EvalContext): number {
       const fn = FUNCTIONS[ident.toUpperCase()];
       if (!fn) throw new Error("#NAME?");
       pos++;
+      // COUNT counts numbers, and an error is not a number: Excel and Sheets
+      // skip it rather than failing the count. Every other function here
+      // propagates errors, as they do.
+      const skipErrors = ident.toUpperCase() === "COUNT";
       const args: number[] = [];
       if (peek() !== ")") {
         for (;;) {
-          args.push(...parseArg());
+          args.push(...parseArg(skipErrors));
           if (eat(",")) continue;
           break;
         }
@@ -278,7 +292,7 @@ function evaluateExpression(input: string, ctx: EvalContext): number {
    * AVERAGE(A1, A2) treats an empty A2 in Excel. Anything else is an
    * expression and is evaluated as one.
    */
-  function parseArg(): number[] {
+  function parseArg(skipErrors = false): number[] {
     skipWs();
     const rest = src.slice(pos);
     const range = /^([A-Za-z]+\d+)\s*:\s*([A-Za-z]+\d+)/.exec(rest);
@@ -286,12 +300,12 @@ function evaluateExpression(input: string, ctx: EvalContext): number {
       pos += range[0].length;
       const refs = expandRange(range[1], range[2]);
       if (!refs.length) throw new Error("#REF!");
-      return numbersIn(refs);
+      return numbersIn(refs, skipErrors);
     }
     const bare = /^([A-Za-z]+\d+)\s*(?=[,)])/.exec(rest);
     if (bare && parseRef(bare[1].toUpperCase())) {
       pos += bare[0].length;
-      return numbersIn([bare[1]]);
+      return numbersIn([bare[1]], skipErrors);
     }
     return [parseExpr()];
   }
