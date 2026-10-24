@@ -176,7 +176,7 @@ export function CalendarWorkspace(props: CalendarWorkspaceProps) {
 function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const tasks = useTasks();
   const records = useRecords();
-  const { addTask, addDoc, updateTask, updateRecord, openAsDoc, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
+  const { addTask, updateTask, updateRecord, openAsDoc, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
   /* Note: FullCalendar's plugins were briefly loaded on demand to keep the
    * Month and Year plugins out of the initial bundle. It does not work — the
    * React wrapper registers plugins at construction, so a plugin added to the
@@ -630,6 +630,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   // re-renders and so cannot close over `records` directly.
   const recordsRef = useRef(records);
   useEffect(() => { recordsRef.current = records; });
+  /* What the grid is showing right now, for the same reason. The drop handler
+   * read `view`, `anchorDate` and `gridDays` from its closure, and is recreated
+   * only when the docs panel opens or closes — so after paging to next week, a
+   * task dropped on Thursday 2pm was scheduled for *last* Thursday 2pm and
+   * vanished from the screen it was dropped on, and a drop in month view took
+   * the time-grid branch. Set further down, once gridDays exists. */
+  const gridGeometryRef = useRef<{ view: CalendarView; anchorDate: Date; gridDays: Date[] } | null>(null);
 
   const handleUniversalDrop = useCallback(
     (evt: UniversalDropEvent) => {
@@ -646,11 +653,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
        * Falls back to now + 1h when there is no point to read: a keyboard
        * drag, or a drop on a view with no time axis at all. */
       const slotFromPoint = (): { start: string; end: string } | null => {
-        if (!point) return null;
-        if (view === "dayGridMonth") {
+        // The grid as it is now, not as it was when this handler was made.
+        const shown = gridGeometryRef.current;
+        if (!point || !shown) return null;
+        if (shown.view === "dayGridMonth") {
           const body = document.querySelector(".mg__body");
           if (!body) return null;
-          const day = pointToDay(point, body.getBoundingClientRect(), monthWeeks(anchorDate, 0));
+          const day = pointToDay(point, body.getBoundingClientRect(), monthWeeks(shown.anchorDate, 0));
           if (!day) return null;
           // A month cell has no hour, so give it the start of the working day.
           const start = new Date(day);
@@ -665,7 +674,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         const slot = pointToSlot(
           point,
           body.getBoundingClientRect(),
-          gridDays,
+          shown.gridDays,
           DEFAULT_AXIS,
           { gutter: Number.isFinite(gutter) ? gutter : 56 },
         );
@@ -825,11 +834,11 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         return;
       }
     },
-    // All mutable entity state is accessed via refs (eventsRef) or stable
-    // callbacks (addDoc, addTask, updateRecord, handleConvertToDoc). This keeps
+    // All mutable entity state — including what the grid is showing — is read
+    // through refs, and the rest are stable callbacks. This keeps
     // handleUniversalDrop referentially stable across polling re-renders so
     // DndContext's onDragEnd handler doesn't churn mid-drag.
-    [addDoc, addTask, updateTask, updateRecord, handleConvertToDoc, openDocs],
+    [addTask, updateTask, updateRecord, handleConvertToDoc, openDocs],
   );
 
   /** Set by handleUniversalDrop when a task/doc is dropped onto the calendar
@@ -963,7 +972,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         at:    now
       };
 
-      if (changed || eventsCacheRef.current.size !== events.length) {
+      // The rendered count comes from the ref, not the closure. This callback
+      // is rebuilt only when the range or the selected calendars change, so
+      // `events.length` here was the count from whenever that last happened —
+      // 0 on first load. Against a full cache that mismatch was always true,
+      // so every refetch replaced the events array and re-rendered the whole
+      // calendar even when the etag check above had found nothing new.
+      if (changed || eventsCacheRef.current.size !== eventsRef.current.length) {
         setEvents(Array.from(eventsCacheRef.current.values()));
       }
 
@@ -1209,6 +1224,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     () => (view === "timeGridDay" ? [startOfDay(anchorDate)] : weekDays(anchorDate, 0)),
     [view, anchorDate],
   );
+  useEffect(() => { gridGeometryRef.current = { view, anchorDate, gridDays }; });
 
 
 
