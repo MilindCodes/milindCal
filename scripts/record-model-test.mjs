@@ -11,7 +11,9 @@ import {
   isScheduled, isActionable, hasBody, hasSheet, isDone, facetsOf,
   schedule, unschedule, makeActionable, ensureBody, ensureSheet, facetPatch,
   recordFromTask, taskFromRecord, recordFromDoc, docFromRecord, recordFromEvent,
+  adoptedGoogleKeys, opensAsDoc,
 } from '../lib/record.ts';
+import { isLinkedToGoogle } from '../lib/models.ts';
 
 let pass = 0, fail = 0;
 const t = (label, got, want) => {
@@ -144,6 +146,80 @@ const evRec = recordFromEvent(event);
 t('event ⇒ record is scheduled', isScheduled(evRec), true);
 t('event ⇒ record is not actionable', isActionable(evRec), false);
 t('event ⇒ record keeps its etag', evRec.google?.etag, 'W/1');
+
+/* ── A doc on the calendar is the same record ─────────────────────── */
+
+/**
+ * Dropping a doc on the grid now writes its time onto the doc itself, which
+ * updateRecord stores as calendarMeta with no Google event behind it. These pin
+ * every property that drop relies on, in the order it relies on them: the doc
+ * becomes a scheduled record, so it renders; it is not mistaken for an adopted
+ * Google event, so nothing is suppressed on its account; and it is not linked,
+ * so nothing tries to sync it out.
+ */
+{
+  const unlinked = recordFromDoc({
+    id: 'd1', title: 'Planning notes', content: { type: 'doc' },
+    createdAt: 1, updatedAt: 1, links: [],
+    calendarMeta: {
+      eventId: '', calendarId: '', title: 'Planning notes',
+      start: '2026-09-10T14:00:00.000Z', end: '2026-09-10T15:00:00.000Z', allDay: false,
+    },
+  });
+  t('a doc given a time is scheduled', isScheduled(unlinked), true);
+  t('and keeps its body, so it is still a doc', hasBody(unlinked), true);
+  t('it is on the calendar and in docs at once', facetsOf(unlinked), ['calendar', 'doc']);
+  t('it suppresses no Google event', [...adoptedGoogleKeys([unlinked])], []);
+  t('it is not linked to Google', isLinkedToGoogle({
+    eventId: '', calendarId: '', title: 'x', start: 's', end: 'e', allDay: false,
+  }), false);
+  t('clicking it opens the doc', opensAsDoc(unlinked), true);
+
+  // A doc converted from a meeting *is* that meeting.
+  const converted = recordFromDoc({
+    id: 'd2', title: 'Standup', content: { type: 'doc' },
+    createdAt: 1, updatedAt: 1, links: [],
+    calendarMeta: {
+      eventId: 'evt9', calendarId: 'primary', title: 'Standup',
+      start: '2026-09-10T09:00:00.000Z', end: '2026-09-10T09:15:00.000Z', allDay: false,
+    },
+  });
+  // This was built from the task list alone, so a converted doc rendered
+  // twice: once from its record, once from Google's own copy.
+  t('a doc converted from a meeting suppresses Google\'s copy',
+    [...adoptedGoogleKeys([converted])], ['primary::evt9']);
+  t('and is linked to Google', isLinkedToGoogle({
+    eventId: 'evt9', calendarId: 'primary', title: 'x', start: 's', end: 'e', allDay: false,
+  }), true);
+}
+
+/* ── Adoption ─────────────────────────────────────────────────────── */
+{
+  const adoptedTask = recordFromTask({
+    id: 't1', title: 'Review', completed: false, createdAt: 1,
+    start: '2026-09-10T10:00:00.000Z', end: '2026-09-10T11:00:00.000Z',
+    googleEventId: 'evt1', googleCalendarId: 'primary',
+  });
+  t('an adopted task still suppresses its Google copy',
+    [...adoptedGoogleKeys([adoptedTask])], ['primary::evt1']);
+
+  // Suppressing Google's copy of an event that no record draws would make the
+  // event vanish rather than deduplicate it.
+  const unscheduled = recordFromTask({
+    id: 't2', title: 'Was a meeting', completed: false, createdAt: 1,
+    googleEventId: 'evt2', googleCalendarId: 'primary',
+  });
+  t('a record that is not drawn suppresses nothing', [...adoptedGoogleKeys([unscheduled])], []);
+  t('a half-known identity suppresses nothing',
+    [...adoptedGoogleKeys([base({ start: 'x', google: { calendarId: 'primary', eventId: '' } })])], []);
+  t('every kind is covered in one pass',
+    [...adoptedGoogleKeys([adoptedTask, unscheduled])].length, 1);
+}
+
+/* ── Where a click on the calendar goes ───────────────────────────── */
+t('a plain task opens on the board', opensAsDoc(base({ affinity: 'task' })), false);
+t('a task that grew a body opens as a doc', opensAsDoc(base({ affinity: 'task', body: { type: 'doc' } })), true);
+t('a doc with no body yet is still a doc', opensAsDoc(base({ affinity: 'doc', body: null })), true);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

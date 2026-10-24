@@ -386,3 +386,40 @@ export function recordFromEvent(e: CalendarEvent): MilindRecord {
     google: { calendarId: e.calendarId, eventId: e.id, etag: e.etag },
   };
 }
+
+/* ── Rendering records on the calendar ───────────────────────────────── */
+
+/**
+ * The Google events the calendar should *not* draw, because a record already
+ * draws them.
+ *
+ * A record that carries a Google identity and a time is that event, rendered
+ * from milindCal's side; drawing Google's copy as well puts two tiles in one
+ * slot. This used to be built from the task list alone, so a doc converted
+ * from a meeting — whose identity lives in `calendarMeta` — rendered twice.
+ * Built from the unified record space, it covers every kind at once.
+ *
+ * Only records that actually render count. Suppressing Google's copy of an
+ * event no record is drawing would make the event vanish rather than dedupe.
+ */
+export function adoptedGoogleKeys(records: readonly MilindRecord[]): Set<string> {
+  const keys = new Set<string>();
+  for (const r of records) {
+    if (r.start && r.google?.eventId && r.google.calendarId) {
+      keys.add(`${r.google.calendarId}::${r.google.eventId}`);
+    }
+  }
+  return keys;
+}
+
+/**
+ * Whether clicking this record on the calendar should open it as a document.
+ *
+ * The facet rule from the top of this file: a record with a body opens in the
+ * docs editor. A doc with no body yet is still a doc — it was authored as one
+ * — so affinity counts too. Anything else is a task on the calendar, and
+ * belongs on the board.
+ */
+export function opensAsDoc(r: Pick<MilindRecord, "affinity" | "body">): boolean {
+  return r.affinity === "doc" || (r.body !== undefined && r.body !== null);
+}

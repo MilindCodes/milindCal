@@ -14,10 +14,11 @@ import dynamic from "next/dynamic";
 import { CalendarEventTile } from "@/components/calendar-event-tile";
 import { TasksSidebar } from "@/components/tasks-sidebar";
 import { UniversalDragLayer, useUniversalDroppable, type UniversalDropEvent } from "@/components/universal-drag-layer";
-import { entityKey, eventKey, parseEventId, type EntityKey } from "@/lib/entity-store";
+import { entityKey, parseEventId } from "@/lib/entity-store";
 import { DEFAULT_SHEET, type SheetData } from "@/lib/sheet";
 import { humanizeError } from "@/lib/errors";
 import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, SaveEventInput, Task } from "@/lib/models";
+import { adoptedGoogleKeys, opensAsDoc } from "@/lib/record";
 
 /* ── Lazily-loaded heavy views ──
  *
@@ -175,7 +176,7 @@ export function CalendarWorkspace(props: CalendarWorkspaceProps) {
 function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const tasks = useTasks();
   const records = useRecords();
-  const { addTask, addDoc, updateTask, updateRecord, link, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
+  const { addTask, addDoc, updateTask, updateRecord, openAsDoc, registerLabelResolver, pendingOpenDocId, driveAuthError } = useEntityActions();
   /* Note: FullCalendar's plugins were briefly loaded on demand to keep the
    * Month and Year plugins out of the initial bundle. It does not work — the
    * React wrapper registers plugins at construction, so a plugin added to the
@@ -654,10 +655,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         );
         return slot ? { start: slot.start.toISOString(), end: slot.end.toISOString() } : null;
       };
-      const sourceKey: EntityKey = source.kind === "event" && source.calendarId
-        ? eventKey(source.calendarId, source.id)
-        : entityKey(source.kind, source.id);
-
       // Same-kind drops are reorder/move intents handled by the sidebar itself.
       if (source.kind === target.targetKind) return;
 
@@ -681,15 +678,24 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
           : dropped?.end ?? new Date(new Date(slotStart).getTime() + 60 * 60 * 1000).toISOString();
         const allDay = target.data?.allDay === true;
 
-        updateTask(source.id, { start: slotStart, end: slotEnd, allDay });
+        // Through updateRecord rather than updateTask: the server drops a
+        // task's schedule, and updateRecord is what mirrors it locally so the
+        // task is still on the calendar after a reload.
+        updateRecord(source.id, { start: slotStart, end: slotEnd, allDay });
         return;
       }
 
-      /* ── doc → event ────────────────────────── */
+      /* ── doc → calendar ──────────────────────
+       *
+       * The same as a task, because it is the same thing. A milindDoc is a
+       * calendar event with rich text; giving it a time is a field write, and
+       * it renders on the grid from its own record.
+       *
+       * This branch used to do exactly what the comment above condemns: open
+       * the event editor, create a second entity in Google, and join the two
+       * with a link edge. It was the one case where the architecture's headline
+       * claim — a doc *is* an event — did not hold. */
       if (source.kind === "doc" && target.targetKind === "event") {
-        docPendingTitleRef.current = source.label || "Untitled";
-        docPendingDescriptionRef.current = source.description ?? "";
-        setEditingEvent(null);
         const dropped = slotFromPoint();
         const slotStart = typeof target.data?.start === "string"
           ? target.data.start as string
@@ -697,10 +703,9 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         const slotEnd = typeof target.data?.end === "string"
           ? target.data.end as string
           : dropped?.end ?? new Date(new Date(slotStart).getTime() + 60 * 60 * 1000).toISOString();
-        setDraftWindow({ start: slotStart, end: slotEnd });
-        setEditorEntranceFrom("doc");
-        setEventEditorOpen(true);
-        pendingLinkSourceRef.current = sourceKey;
+        const allDay = target.data?.allDay === true;
+
+        updateRecord(source.id, { start: slotStart, end: slotEnd, allDay });
         return;
       }
 
@@ -798,16 +803,15 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       }
     },
     // All mutable entity state is accessed via refs (eventsRef) or stable
-    // callbacks (addDoc, addTask, link, handleConvertToDoc). This keeps
+    // callbacks (addDoc, addTask, updateRecord, handleConvertToDoc). This keeps
     // handleUniversalDrop referentially stable across polling re-renders so
     // DndContext's onDragEnd handler doesn't churn mid-drag.
-    [addDoc, addTask, updateTask, updateRecord, handleConvertToDoc, link, openDocs],
+    [addDoc, addTask, updateTask, updateRecord, handleConvertToDoc, openDocs],
   );
 
   /** Set by handleUniversalDrop when a task/doc is dropped onto the calendar
    *  grid, then consumed inside the createEvent flow to add a link edge from
    *  the source entity to the newly-created event. */
-  const pendingLinkSourceRef = useRef<EntityKey | null>(null);
 
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [taskBoardExpanded, setTaskBoardExpanded] = useState(false);
@@ -1131,11 +1135,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const gridEvents = useMemo<GridEvent[]>(() => {
     // Events milindCal has adopted are rendered from their record below;
     // drawing Google's copy too would put two tiles in the same slot.
-    const adopted = new Set(
-      tasks
-        .filter((t) => t.googleEventId)
-        .map((t) => `${t.googleCalendarId}::${t.googleEventId}`),
-    );
+    const adopted = adoptedGoogleKeys(records);
 
     const out: GridEvent[] = events
       .filter((event) => !adopted.has(`${event.calendarId}::${event.id}`))
@@ -1173,7 +1173,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     }
 
     return out;
-  }, [events, tasks, scheduledRecords]);
+  }, [events, records, scheduledRecords]);
 
 
 
@@ -1245,6 +1245,14 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     // Scheduled tasks live on the board, so surface them there rather than in
     // the Google event editor, which has no record to load.
     if (eventClick.event.id.startsWith("task:")) {
+      const recordId = eventClick.event.id.slice("task:".length);
+      const record = records.find((r) => r.id === recordId);
+      // A doc on the calendar opens as the doc it is; the task board has no
+      // row for it and would open on nothing.
+      if (record && opensAsDoc(record)) {
+        openAsDoc(entityKey("doc", recordId));
+        return;
+      }
       setTaskBoardExpanded(true);
       return;
     }
@@ -1484,6 +1492,10 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   // is enough of a cursor-tracking flourish.
 
   const saveEvent = async (payload: SaveEventInput) => {
+    // An update addressed to no event must not fall through to the create
+    // branch below. `eventId ? PATCH : POST` reads "" as "create", so an empty
+    // id would mint a new Google event out of a partial payload.
+    if (payload.eventId === "") return;
     try {
       const { calendarId, event, eventId } = payload;
 
@@ -1500,20 +1512,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
       if (!response.ok) {
         throw new Error("Unable to save event");
-      }
-
-      // If this event was created from a dropped task/doc, attach the back-link
-      // to the newly-created event so backlinks panels find it.
-      if (!eventId && pendingLinkSourceRef.current) {
-        try {
-          const body = await response.clone().json() as { event?: { id?: string; calendarId?: string } };
-          const createdId = body.event?.id;
-          const createdCal = body.event?.calendarId ?? calendarId;
-          if (createdId) {
-            link(pendingLinkSourceRef.current, eventKey(createdCal, createdId));
-          }
-        } catch { /* body wasn't JSON — skip link */ }
-        pendingLinkSourceRef.current = null;
       }
 
       await readEvents({ silent: true, force: true });
@@ -1552,9 +1550,13 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     // write the new window back to the record. No Google round-trip, because
     // there is no separate event to keep in step.
     if (change.event.id.startsWith("task:")) {
-      const taskId = change.event.id.slice("task:".length);
-      const task = tasksRef.current.find((t) => t.id === taskId);
-      updateTask(taskId, {
+      const recordId = change.event.id.slice("task:".length);
+      const record = records.find((r) => r.id === recordId);
+      // updateRecord, not updateTask: updateTask's doc branch has no slot for
+      // a schedule, so a scheduled doc dragged on the grid silently dropped
+      // its new time and snapped back. updateRecord writes a doc's time into
+      // calendarMeta and mirrors a task's against the server dropping it.
+      updateRecord(recordId, {
         start: change.event.startStr,
         end: change.event.endStr || undefined,
         allDay: change.event.allDay,
@@ -1562,13 +1564,15 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
       // A record that has been adopted from Google still exists there, so the
       // new window has to reach Google too — otherwise the next sync would
-      // pull the old time back and silently undo the drag.
-      if (task?.googleEventId && task.googleCalendarId) {
-        void fetch(`/api/google/events/${encodeURIComponent(task.googleEventId)}`, {
+      // pull the old time back and silently undo the drag. That now includes
+      // a doc converted from a meeting, not only an adopted task.
+      const google = record?.google;
+      if (google?.eventId && google.calendarId) {
+        void fetch(`/api/google/events/${encodeURIComponent(google.eventId)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            calendarId: task.googleCalendarId,
+            calendarId: google.calendarId,
             // A drag changes when, and only when. This used to send the
             // title, a blank location, `attendees: []`, `recurrence: []` and
             // `colorId: "9"` as well, so moving an adopted meeting on the grid

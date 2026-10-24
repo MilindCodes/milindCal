@@ -124,6 +124,21 @@ export interface MilindDocCalendarMeta {
   allDay: boolean;
 }
 
+/**
+ * Whether a doc's schedule has a Google event behind it.
+ *
+ * A doc can carry a time without existing in Google at all — the "link calendar
+ * event" pill creates `calendarMeta` with an empty `eventId`, and so does
+ * scheduling a doc by dropping it on the grid. Every path that syncs a doc out
+ * to Google has to ask this first. Without it, autosave PATCHed
+ * `/api/google/events/` with no id every 1.5 seconds, and the canvas sent an
+ * empty id to a handler that routes `eventId ? PATCH : POST` — turning an
+ * update into a create.
+ */
+export function isLinkedToGoogle(meta: MilindDocCalendarMeta | undefined | null): meta is MilindDocCalendarMeta {
+  return Boolean(meta?.eventId && meta.calendarId);
+}
+
 /** A single document in the milindDocs library. */
 export interface MilindDocFile {
   id: string;

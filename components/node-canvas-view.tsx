@@ -27,7 +27,7 @@ import {
 } from "react";
 import { addDays, sameDay, weekDays } from "@/lib/calendar-grid";
 import type { CalendarEvent, CalendarSummary, MilindDocFile, PanelNote, SaveEventInput, Task, TaskImportance } from "@/lib/models";
-import { CANVAS_PENDING_NOTE_KEY } from "@/lib/models";
+import { CANVAS_PENDING_NOTE_KEY, isLinkedToGoogle } from "@/lib/models";
 import { MilindDoc } from "@/components/milind-doc";
 import { useDocs, useEntityActions, useTasks } from "@/components/entity-store-context";
 
@@ -1144,7 +1144,7 @@ export function NodeCanvasView({
       addDoc(updated);
     }
     // Sync content back to Google Calendar event
-    if (updated.calendarMeta) {
+    if (isLinkedToGoogle(updated.calendarMeta)) {
       const { eventId, calendarId, title, start, end, location, allDay } = updated.calendarMeta;
       const description = tiptapToPlainText(updated.content);
       void onSaveEvent({

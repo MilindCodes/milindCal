@@ -9,6 +9,7 @@ import { MilindDoc } from "@/components/milind-doc";
 import { BrandMark } from "@/components/brand-mark";
 import { useDocs, useEntityActions } from "@/components/entity-store-context";
 import type { MilindDocCalendarMeta, MilindDocFile, CalendarEvent, PanelNote } from "@/lib/models";
+import { isLinkedToGoogle } from "@/lib/models";
 
 /* The graph panel is toggled off by default, so keep its tree (and the
  * force-layout work it pulls in) out of the docs chunk until it's shown. */
@@ -217,7 +218,7 @@ export function MilindDocsSection({
 
   const handleSaveDoc = useCallback((updated: MilindDocFile) => {
     updateDoc(updated.id, updated);
-    if (updated.calendarMeta && onSyncEventDescription) {
+    if (isLinkedToGoogle(updated.calendarMeta) && onSyncEventDescription) {
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
       syncTimerRef.current = setTimeout(() => {
         const description = tiptapToPlainText(updated.content);
@@ -256,6 +257,8 @@ export function MilindDocsSection({
   // Reads the current doc content to send as the Google event description.
   // Doesn't mutate docs state, so no API call needed here.
   const handleSyncCalendarMeta = useCallback(async (meta: MilindDocCalendarMeta) => {
+    // A schedule with no Google event behind it has nothing to sync to.
+    if (!isLinkedToGoogle(meta)) return;
     const doc = docs.find((d) => d.calendarMeta?.eventId === meta.eventId);
     const description = doc ? tiptapToPlainText(doc.content) : "";
     void fetch(`/api/google/events/${encodeURIComponent(meta.eventId)}`, {
