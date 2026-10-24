@@ -21,7 +21,7 @@ import {
   clearRange,
   columnName,
   fillValues,
-  evaluateCell,
+  createEvaluator,
   EMPTY_HISTORY,
   normalizeRange,
   parseTSV,
@@ -55,6 +55,10 @@ const cellDomId = (ref: string) => `sheet-cell-${ref}`;
 
 export function SheetView({ title, sheet, onChange }: SheetViewProps) {
   const data = sheet ?? DEFAULT_SHEET;
+  /* Evaluated once per change to the cells, not once per cell per render.
+   * Moving the selection re-renders the grid without touching the cells, so it
+   * now costs a lookup per cell instead of re-solving every formula chain. */
+  const evaluate = useMemo(() => createEvaluator(data.cells), [data.cells]);
   const [sel, setSel] = useState<{ row: number; col: number }>({ row: 0, col: 0 });
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -534,7 +538,7 @@ export function SheetView({ title, sheet, onChange }: SheetViewProps) {
               const ref = cellRef(r, c);
               const isSel = r === sel.row && c === sel.col;
               const isEditing = editing === ref;
-              const value = evaluateCell(ref, data.cells);
+              const value = evaluate(ref);
               const isError = typeof value === "string" && value.startsWith("#");
               return (
                 <div

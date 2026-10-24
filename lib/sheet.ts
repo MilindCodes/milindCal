@@ -10,19 +10,11 @@
  * serialised record small, which matters because records sync on every edit.
  */
 
-export interface SheetData {
-  /** Sparse cell map keyed by A1 notation. Values are raw input — a formula
-   *  is stored with its leading "=" and evaluated on read. */
-  cells: Record<string, string>;
-  /** Grid extent. Purely presentational: cells outside it are still stored
-   *  and still evaluate, so shrinking the grid never destroys data. */
-  rows: number;
-  cols: number;
-  /** Per-column widths in px, keyed by zero-based column index. */
-  colWidths?: Record<number, number>;
-}
-
-export const DEFAULT_SHEET: SheetData = { cells: {}, rows: 24, cols: 8 };
+/* The shape and the default live in sheet-data.ts, which has no code in it.
+ * The calendar and the record model need DEFAULT_SHEET at startup; importing
+ * it from here dragged this whole module — the formula engine included — onto
+ * the first-load path, though the grid that uses the engine is lazy-loaded. */
+export { DEFAULT_SHEET, type SheetData } from "./sheet-data";
 
 /* ── A1 notation ──────────────────────────────────────────────────── */
 
@@ -76,17 +68,79 @@ function expandRange(from: string, to: string): string[] {
 
 export type CellValue = number | string;
 
+const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+/** Excel and Sheets agree: the average of no numbers is a division by zero. */
+const mean = (xs: number[]) => {
+  if (!xs.length) throw new Error("#DIV/0!");
+  return sum(xs) / xs.length;
+};
+
+/* reduce rather than Math.min(...xs): spreading a large range into arguments
+ * overflows the call stack somewhere past a hundred thousand cells. */
 const FUNCTIONS: Record<string, (xs: number[]) => number> = {
-  SUM: (xs) => xs.reduce((a, b) => a + b, 0),
-  AVERAGE: (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0),
-  AVG: (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0),
-  MIN: (xs) => (xs.length ? Math.min(...xs) : 0),
-  MAX: (xs) => (xs.length ? Math.max(...xs) : 0),
+  SUM: sum,
+  AVERAGE: mean,
+  AVG: mean,
+  MIN: (xs) => (xs.length ? xs.reduce((a, b) => (b < a ? b : a)) : 0),
+  MAX: (xs) => (xs.length ? xs.reduce((a, b) => (b > a ? b : a)) : 0),
   COUNT: (xs) => xs.length,
   PRODUCT: (xs) => xs.reduce((a, b) => a * b, 1),
   ROUND: (xs) => (xs.length ? Math.round(xs[0] * 10 ** (xs[1] ?? 0)) / 10 ** (xs[1] ?? 0) : 0),
   ABS: (xs) => Math.abs(xs[0] ?? 0),
 };
+
+/**
+ * What a cell contributes as an operand.
+ *
+ * Blank and text have to stay distinguishable from 0. Every range used to be
+ * read through one function that returned 0 for both, so the aggregates could
+ * not tell a gap from a zero: AVERAGE of 2, blank, 4 was 2 rather than 3,
+ * COUNT counted blanks and labels, and MIN of 5, blank, 7 was 0.
+ */
+type Operand = number | "blank" | "text";
+
+interface EvalContext {
+  cells: Record<string, string>;
+  /** Every formula already resolved in this pass, errors included. */
+  memo: Map<string, number | { error: string }>;
+  /** Cells on the current resolution path, so a cycle reports #CYCLE!. */
+  visiting: Set<string>;
+}
+
+function errorCode(err: unknown): string {
+  const message = err instanceof Error ? err.message : "";
+  return message.startsWith("#") ? message : "#ERROR!";
+}
+
+function readCell(key: string, ctx: EvalContext): Operand {
+  const raw = ctx.cells[key];
+  if (raw === undefined || raw.trim() === "") return "blank";
+  if (!raw.startsWith("=")) {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : "text";
+  }
+  const cached = ctx.memo.get(key);
+  if (cached !== undefined) {
+    if (typeof cached === "number") return cached;
+    throw new Error(cached.error);
+  }
+  if (ctx.visiting.has(key)) throw new Error("#CYCLE!");
+  ctx.visiting.add(key);
+  try {
+    const value = evaluateExpression(raw.slice(1), ctx);
+    ctx.memo.set(key, value);
+    return value;
+  } catch (err) {
+    // An error is a result too: cache it, so a broken cell referenced from a
+    // hundred places is worked out once rather than a hundred times.
+    const code = errorCode(err);
+    ctx.memo.set(key, { error: code });
+    throw new Error(code);
+  } finally {
+    ctx.visiting.delete(key);
+  }
+}
 
 /**
  * Recursive-descent evaluator over a small expression grammar:
@@ -96,14 +150,10 @@ const FUNCTIONS: Record<string, (xs: number[]) => number> = {
  *   factor  := "-"? primary ("^" factor)?
  *   primary := number | ref | range | call | "(" expr ")"
  *
- * `visiting` carries the chain of cells currently being resolved so a cycle
- * reports #CYCLE! rather than blowing the stack.
+ * Cell references resolve through the context's memo, so within one pass
+ * every formula is evaluated exactly once.
  */
-function evaluateExpression(
-  input: string,
-  cells: Record<string, string>,
-  visiting: Set<string>,
-): number {
+function evaluateExpression(input: string, ctx: EvalContext): number {
   let pos = 0;
   const src = input;
 
@@ -147,24 +197,27 @@ function evaluateExpression(
     return base;
   }
 
-  /** Numeric value of one cell, resolving formulas recursively. */
+  /**
+   * A cell used in arithmetic. Blank is 0, as everywhere. Text is #VALUE!:
+   * this used to count it as 0 on the grounds that that matches spreadsheet
+   * convention, but Excel and Sheets both return #VALUE! for ="hello"+1, and
+   * an error you can see beats a number that is silently wrong.
+   */
   function refValue(ref: string): number {
-    const key = ref.toUpperCase();
-    if (visiting.has(key)) throw new Error("#CYCLE!");
-    const raw = cells[key];
-    if (raw === undefined || raw === "") return 0;
-    if (raw.startsWith("=")) {
-      visiting.add(key);
-      try {
-        return evaluateExpression(raw.slice(1), cells, visiting);
-      } finally {
-        visiting.delete(key);
-      }
+    const operand = readCell(ref.toUpperCase(), ctx);
+    if (typeof operand === "number") return operand;
+    if (operand === "blank") return 0;
+    throw new Error("#VALUE!");
+  }
+
+  /** The numbers among some referenced cells; blanks and text are skipped. */
+  function numbersIn(refs: string[]): number[] {
+    const out: number[] = [];
+    for (const ref of refs) {
+      const operand = readCell(ref.toUpperCase(), ctx);
+      if (typeof operand === "number") out.push(operand);
     }
-    const n = Number(raw);
-    // Text in an arithmetic context counts as zero, matching spreadsheet
-    // convention — it should not poison the whole formula with NaN.
-    return Number.isFinite(n) ? n : 0;
+    return out;
   }
 
   function parsePrimary(): number {
@@ -211,26 +264,35 @@ function evaluateExpression(
       pos += endMatch[0].length;
       const refs = expandRange(ident, endMatch[0]);
       if (!refs.length) throw new Error("#REF!");
-      // A bare range outside a function collapses to its sum.
-      return refs.reduce((acc, r) => acc + refValue(r), 0);
+      // A bare range outside a function collapses to its sum — SUM's rules.
+      return sum(numbersIn(refs));
     }
 
     if (!parseRef(ident)) throw new Error("#NAME?");
     return refValue(ident);
   }
 
-  /** An argument may be a range, which contributes many values. */
+  /**
+   * One function argument. A range, or a bare reference on its own, follows
+   * the aggregate rule — numbers only, blanks and text skipped — the way
+   * AVERAGE(A1, A2) treats an empty A2 in Excel. Anything else is an
+   * expression and is evaluated as one.
+   */
   function parseArg(): number[] {
     skipWs();
-    const save = pos;
-    const m = /^([A-Za-z]+\d+)\s*:\s*([A-Za-z]+\d+)/.exec(src.slice(pos));
-    if (m) {
-      pos += m[0].length;
-      const refs = expandRange(m[1], m[2]);
+    const rest = src.slice(pos);
+    const range = /^([A-Za-z]+\d+)\s*:\s*([A-Za-z]+\d+)/.exec(rest);
+    if (range) {
+      pos += range[0].length;
+      const refs = expandRange(range[1], range[2]);
       if (!refs.length) throw new Error("#REF!");
-      return refs.map(refValue);
+      return numbersIn(refs);
     }
-    pos = save;
+    const bare = /^([A-Za-z]+\d+)\s*(?=[,)])/.exec(rest);
+    if (bare && parseRef(bare[1].toUpperCase())) {
+      pos += bare[0].length;
+      return numbersIn([bare[1]]);
+    }
     return [parseExpr()];
   }
 
@@ -241,19 +303,107 @@ function evaluateExpression(
   return result;
 }
 
-/** Display value for a cell: formulas evaluated, everything else verbatim. */
-export function evaluateCell(ref: string, cells: Record<string, string>): CellValue {
-  const raw = cells[ref.toUpperCase()];
-  if (raw === undefined || raw === "") return "";
-  if (!raw.startsWith("=")) return raw;
-  try {
-    const n = evaluateExpression(raw.slice(1), cells, new Set([ref.toUpperCase()]));
-    // Trim float noise (0.1 + 0.2) without truncating genuine precision.
-    return Math.abs(n - Math.round(n)) < 1e-10 ? Math.round(n) : Number(n.toFixed(10));
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "#ERROR!";
-    return msg.startsWith("#") ? msg : "#ERROR!";
+/* ── Evaluating a whole sheet ─────────────────────────────────────── */
+
+/**
+ * The cells a formula mentions. Deliberately loose — it may name a cell that
+ * is not really a reference — because it only decides evaluation order, and
+ * the evaluator itself stays correct whatever order it is handed.
+ */
+function referencedCells(formula: string): string[] {
+  const out: string[] = [];
+  const re = /\b([A-Za-z]+\d+)(?:\s*:\s*([A-Za-z]+\d+))?\b/g;
+  for (let m = re.exec(formula); m; m = re.exec(formula)) {
+    if (m[2]) out.push(...expandRange(m[1], m[2]));
+    else if (parseRef(m[1].toUpperCase())) out.push(m[1].toUpperCase());
   }
+  return out;
+}
+
+/**
+ * Every formula, ordered so each comes after the formulas it reads.
+ *
+ * An iterative depth-first walk, so ordering a long chain cannot overflow the
+ * stack the way evaluating it recursively did. A cycle is left in place; the
+ * evaluator reports it as #CYCLE!.
+ */
+function evaluationOrder(cells: Record<string, string>): string[] {
+  const formulas = Object.keys(cells).filter((k) => cells[k].startsWith("="));
+  const deps = new Map<string, string[]>();
+  for (const key of formulas) {
+    deps.set(key, referencedCells(cells[key].slice(1)).filter((r) => r !== key && cells[r]?.startsWith("=")));
+  }
+  const done = new Set<string>();
+  const onPath = new Set<string>();
+  const order: string[] = [];
+  for (const root of formulas) {
+    if (done.has(root)) continue;
+    const stack: [string, number][] = [[root, 0]];
+    onPath.add(root);
+    while (stack.length) {
+      const frame = stack[stack.length - 1];
+      const children = deps.get(frame[0]) ?? [];
+      if (frame[1] < children.length) {
+        const child = children[frame[1]++];
+        if (!done.has(child) && !onPath.has(child)) {
+          onPath.add(child);
+          stack.push([child, 0]);
+        }
+      } else {
+        stack.pop();
+        onPath.delete(frame[0]);
+        done.add(frame[0]);
+        order.push(frame[0]);
+      }
+    }
+  }
+  return order;
+}
+
+/** Trim float noise (0.1 + 0.2) without truncating genuine precision. */
+function display(n: number): number {
+  return Math.abs(n - Math.round(n)) < 1e-10 ? Math.round(n) : Number(n.toFixed(10));
+}
+
+/**
+ * Evaluate a whole sheet once, and look cells up afterwards.
+ *
+ * The grid used to call evaluateCell for every cell, and each call resolved its
+ * dependencies from scratch. A running-total column is a chain, so rendering it
+ * was quadratic — measured at 13ms for 100 rows, 278ms for 500, 1.1 seconds for
+ * 1000, on every render, which the grid does on each arrow key — and past 1342
+ * rows the recursion overflowed and showed #ERROR!. Here every formula is
+ * evaluated exactly once, in dependency order, so each reads its inputs from
+ * the memo: linear in the size of the sheet, and shallow however long the chain.
+ */
+export function createEvaluator(cells: Record<string, string>): (ref: string) => CellValue {
+  const ctx: EvalContext = { cells, memo: new Map(), visiting: new Set() };
+  for (const key of evaluationOrder(cells)) {
+    try { readCell(key, ctx); } catch { /* recorded in the memo */ }
+  }
+  return (ref: string): CellValue => {
+    const key = ref.toUpperCase();
+    const raw = cells[key];
+    if (raw === undefined || raw === "") return "";
+    if (!raw.startsWith("=")) return raw;
+    let result = ctx.memo.get(key);
+    if (result === undefined) {
+      // Not reached for a formula in the cell map, but stays correct anyway.
+      try { readCell(key, ctx); } catch { /* recorded */ }
+      result = ctx.memo.get(key);
+    }
+    if (result === undefined) return "#ERROR!";
+    return typeof result === "number" ? display(result) : result.error;
+  };
+}
+
+/**
+ * Display value for one cell: formulas evaluated, everything else verbatim.
+ * Evaluating several cells? Build one createEvaluator and reuse it — calling
+ * this per cell repeats the whole pass each time.
+ */
+export function evaluateCell(ref: string, cells: Record<string, string>): CellValue {
+  return createEvaluator(cells)(ref);
 }
 
 /** True when the cell should render right-aligned (numeric or a numeric formula). */
@@ -310,11 +460,12 @@ export function rangeRefs(range: Range): string[] {
  * within milindCal keeps formulas by reading the cell map directly instead.
  */
 export function rangeToTSV(range: Range, cells: Record<string, string>): string {
+  const evaluate = createEvaluator(cells);
   const rows: string[] = [];
   for (let r = range.r0; r <= range.r1; r++) {
     const row: string[] = [];
     for (let c = range.c0; c <= range.c1; c++) {
-      const v = evaluateCell(cellRef(r, c), cells);
+      const v = evaluate(cellRef(r, c));
       row.push(String(v));
     }
     rows.push(row.join("\t"));

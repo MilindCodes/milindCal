@@ -27,7 +27,7 @@
  */
 
 import type { CalendarEvent, MilindDocFile, Task, TaskImportance } from "./models";
-import { DEFAULT_SHEET, type SheetData } from "./sheet";
+import { DEFAULT_SHEET, type SheetData } from "./sheet-data";
 
 /** Tiptap document JSON. Deliberately loose — we never introspect it here. */
 export type RichBody = Record<string, unknown>;

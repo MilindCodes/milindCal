@@ -1,4 +1,4 @@
-import type { SheetData } from "./sheet";
+import type { SheetData } from "./sheet-data";
 
 export type EventTypeId = "meeting" | "focus" | "personal" | "travel" | "other";
 

@@ -15,7 +15,7 @@ import { CalendarEventTile } from "@/components/calendar-event-tile";
 import { TasksSidebar } from "@/components/tasks-sidebar";
 import { UniversalDragLayer, useUniversalDroppable, type UniversalDropEvent } from "@/components/universal-drag-layer";
 import { entityKey, parseEventId } from "@/lib/entity-store";
-import { DEFAULT_SHEET, type SheetData } from "@/lib/sheet";
+import { DEFAULT_SHEET, type SheetData } from "@/lib/sheet-data";
 import { humanizeError } from "@/lib/errors";
 import type { CalendarEvent, CalendarSummary, GoogleEventPayload, MilindDocFile, PanelNote, SaveEventInput, Task } from "@/lib/models";
 import { adoptedGoogleKeys, opensAsDoc } from "@/lib/record";
