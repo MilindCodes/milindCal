@@ -175,6 +175,7 @@ const KanbanCard = memo(function KanbanCard({
     <motion.div
       animate={{ opacity: drag.isDragging ? 0.35 : 1, y: 0 }}
       className={`kanban-card ${task.completed ? "done" : ""}`}
+      data-task-id={task.id}
       data-task-row
       exit={{ opacity: 0, scale: 0.95 }}
       initial={{ opacity: 0, y: 8 }}
@@ -289,6 +290,7 @@ const TaskListItem = memo(function TaskListItem({
     <motion.div
       animate={{ opacity: drag.isDragging ? 0.35 : 1, y: 0 }}
       className="task-item"
+      data-task-id={task.id}
       data-task-row
       exit={{ opacity: 0, y: -8 }}
       initial={{ opacity: 0, y: 12 }}
@@ -635,8 +637,12 @@ const TimelineView = memo(function TimelineView({
 
 export function TasksSidebar({
   onExpandChange,
+  openTaskRequest,
 }: {
   onExpandChange?: (expanded: boolean) => void;
+  /** Open the board on this task. The nonce changes on every request, so
+   *  asking for the same task twice still opens it the second time. */
+  openTaskRequest?: { id: string; nonce: number } | null;
 }) {
   /* Tasks state — single source of truth lives in EntityStoreProvider so
    * calendar-workspace and docs can mutate the same set. */
@@ -751,6 +757,32 @@ export function TasksSidebar({
   useEffect(() => {
     onExpandChange?.(boardExpanded || emailBoardExpanded);
   }, [boardExpanded, emailBoardExpanded, onExpandChange]);
+
+  /* A task clicked on the calendar opens here.
+   *
+   * This board owns whether it is expanded; the workspace only mirrors it.
+   * Clicking a scheduled task used to set the workspace's mirror to true,
+   * and the effect above — re-run on every workspace render because it was
+   * handed a fresh inline callback each time — wrote false straight back. So
+   * clicking a task on the calendar, as a week tile or in the month "+N more"
+   * list, never surfaced it. Now the workspace asks, and the board opens
+   * itself, switches to the tasks panel, and puts focus on that task. */
+  const pendingFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openTaskRequest) return;
+    pendingFocusRef.current = openTaskRequest.id;
+    setActivePanel("tasks");
+    setBoardExpanded(true);
+  }, [openTaskRequest]);
+  useEffect(() => {
+    const id = pendingFocusRef.current;
+    if (!id || !boardExpanded) return;
+    const row = document.querySelector<HTMLElement>(`[data-task-row][data-task-id="${CSS.escape(id)}"]`);
+    if (!row) return; // not rendered yet; the next commit tries again
+    pendingFocusRef.current = null;
+    row.focus();
+    row.scrollIntoView({ block: "nearest" });
+  });
 
   /* ---------------------------------------------------------------- */
   /*  Asana integration                                               */

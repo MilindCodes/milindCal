@@ -41,8 +41,9 @@ interface MonthGridProps {
   maxLanes?: number;
   onEventClick?: (event: MonthEvent) => void;
   onDayClick?: (day: Date) => void;
-  /** The "+N more" affordance was used on this day. */
-  onMoreClick?: (day: Date, hidden: number) => void;
+  /** The "+N more" affordance was used on this day. `anchor` is the button
+   *  itself, so the caller can place a popover against it. */
+  onMoreClick?: (day: Date, hidden: number, anchor: HTMLElement) => void;
   renderEvent?: (event: MonthEvent) => ReactNode;
 }
 
@@ -112,7 +113,7 @@ export function MonthGrid({
                       className="mg__more"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onMoreClick?.(day, hiddenPerDay[col]);
+                        onMoreClick?.(day, hiddenPerDay[col], e.currentTarget);
                       }}
                       type="button"
                     >

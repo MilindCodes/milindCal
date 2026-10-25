@@ -2,7 +2,7 @@
 
 import { MonthGrid, YearGrid } from "@/components/calendar-grid/month-grid";
 import { TimeGrid, type GridEvent } from "@/components/calendar-grid/time-grid";
-import { DEFAULT_AXIS, addDays, monthWeeks, pointToDay, pointToSlot, startOfDay, weekDays } from "@/lib/calendar-grid";
+import { DEFAULT_AXIS, addDays, eventLabel, monthWeeks, pointToDay, pointToSlot, startOfDay, weekDays } from "@/lib/calendar-grid";
 import { AnimatePresence, animate, motion, useMotionValue, useTransform, LayoutGroup } from "framer-motion";
 import { AlertCircle, AlertTriangle, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, FileText, Layers, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -253,7 +253,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const [liveSyncMode, setLiveSyncMode] = useState<"connecting" | "live" | "fallback">("connecting");
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
-  const [expandedDateEvents, setExpandedDateEvents] = useState<CalendarEvent[]>([]);
+  const [expandedDateEvents, setExpandedDateEvents] = useState<GridEvent[]>([]);
   const [expandedAnchorRect, setExpandedAnchorRect] = useState<DOMRect | null>(null);
 
   /* The sheet shows whichever record currently carries sheet data. Editing
@@ -847,6 +847,10 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [taskBoardExpanded, setTaskBoardExpanded] = useState(false);
+  /* A request for the board to open on a task. The board owns its expanded
+   * state — taskBoardExpanded only mirrors it — so this is how the calendar
+   * asks rather than writing a mirror the board would overwrite. */
+  const [openTaskRequest, setOpenTaskRequest] = useState<{ id: string; nonce: number } | null>(null);
   const filterPanelRef = useRef<HTMLDivElement | null>(null);
 
   const readCalendars = useCallback(async () => {
@@ -1292,7 +1296,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         openAsDoc(entityKey("doc", recordId));
         return;
       }
-      setTaskBoardExpanded(true);
+      setOpenTaskRequest((prev) => ({ id: recordId, nonce: (prev?.nonce ?? 0) + 1 }));
       return;
     }
 
@@ -1323,11 +1327,20 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     setExpandedAnchorRect(null);
   }, []);
 
-  /* The "+N more" affordance. The grid hands over the day and the cell it was
-   * clicked in, so the day's events are looked up here rather than unpacked
-   * from a calendar library's segment list. */
+  /* The "+N more" affordance: the grid hands over the day and the button that
+   * was clicked, and the popover lists that day from here.
+   *
+   * Three things were wrong with it. The month grid passed no anchor, and the
+   * popover renders only once it has one, so "+N more" did nothing at all and
+   * the events it promised were unreachable from month view. It listed
+   * `events` — Google's alone — so a scheduled task or doc hidden behind the
+   * overflow never appeared, and an adopted event showed Google's copy rather
+   * than the record. And it keyed the day on toISOString's UTC date, which
+   * east of Greenwich is the day before. It now lists what the grid draws,
+   * keyed on the local date. */
   const onMoreLinkClick = useCallback((day: Date, anchorEl: HTMLElement | null) => {
-    const dateStr = day.toISOString().split("T")[0];
+    const dateStr =
+      `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
     if (expandedDate === dateStr) {
       closeExpandedDay();
       return;
@@ -1336,15 +1349,14 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
     const dayStart = startOfDay(day).getTime();
     const dayEnd = addDays(startOfDay(day), 1).getTime();
-    const dayEvents = events.filter((e) => {
-      const start = new Date(e.start).getTime();
-      const end = new Date(e.end || e.start).getTime();
-      return start < dayEnd && end > dayStart;
-    });
+    const dayEvents = gridEvents
+      .filter((e) => e.start.getTime() < dayEnd && e.end.getTime() > dayStart)
+      // All-day first, then by start, as the cell itself orders them.
+      .sort((a, b) => Number(Boolean(b.allDay)) - Number(Boolean(a.allDay)) || a.start.getTime() - b.start.getTime());
 
     setExpandedDate(dateStr);
     setExpandedDateEvents(dayEvents);
-  }, [expandedDate, events, closeExpandedDay]);
+  }, [expandedDate, gridEvents, closeExpandedDay]);
 
   /* Calendar is a drop target for tasks / docs. The drop router picks the
    * time slot from target.data; we leave it undefined here so it defaults
@@ -2087,7 +2099,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
                     });
                   }}
                   onEventClick={(ev) => onEventClick({ event: { id: ev.id } })}
-                  onMoreClick={(day) => onMoreLinkClick(day, null)}
+                  onMoreClick={(day, _hidden, anchor) => onMoreLinkClick(day, anchor)}
                   renderEvent={renderGridEvent}
                 />
               ) : view === "multiMonthYear" ? (
@@ -2142,7 +2154,9 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         </motion.div>
       </motion.section>
 
-      <TasksSidebar onExpandChange={(expanded) => setTaskBoardExpanded(expanded)} />
+      {/* The setter itself, not an inline arrow: a fresh callback every render
+        * re-ran the sidebar's report-back effect on every render. */}
+      <TasksSidebar onExpandChange={setTaskBoardExpanded} openTaskRequest={openTaskRequest} />
 
       <AnimatePresence>
         {expandedDate && expandedAnchorRect ? (
@@ -2183,20 +2197,21 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
                   <motion.li
                     animate={{ opacity: 1, x: 0 }}
                     initial={{ opacity: 0, x: -8 }}
-                    key={`${event.calendarId}::${event.id}`}
+                    key={event.id}
                     transition={{ duration: 0.18, delay: index * 0.04 }}
                   >
                     <button
+                      aria-label={eventLabel(event)}
                       className="day-expand-event"
                       onClick={() => {
-                        setEditingEvent(event);
-                        setDraftWindow({});
-                        setEventEditorOpen(true);
+                        // The same route a tile takes: a Google event opens in
+                        // the editor, a scheduled doc as a doc, a task on the board.
                         closeExpandedDay();
+                        onEventClick({ event: { id: event.id } });
                       }}
                       type="button"
                     >
-                      <span className="day-expand-event-dot" style={{ background: event.color }} />
+                      <span className="day-expand-event-dot" style={{ background: event.accent }} />
                       <span className="day-expand-event-body">
                         <span className="day-expand-event-title">{event.title}</span>
                         <span className="day-expand-event-time">
