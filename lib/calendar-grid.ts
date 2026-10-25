@@ -84,6 +84,21 @@ export function parseTime(hhmm: string): number {
   return Number(h) * 60 + Number(m);
 }
 
+/**
+ * The wall-clock time `minutes` after midnight on `day`.
+ *
+ * Built from the date's fields rather than by adding minutes to startOfDay.
+ * Where daylight saving begins *at* midnight — Chile, and historically Brazil,
+ * Paraguay, Cuba and Iran — local 00:00 does not exist on the transition day,
+ * so startOfDay rightly lands on 01:00. `setMinutes(600)` then keeps that hour
+ * and adds ten more, giving 11:00: every create, move, resize, drop and slot
+ * click on that day came out an hour late. The Date constructor resolves the
+ * fields as written, and 1440 still rolls cleanly onto the next midnight.
+ */
+export function atMinutes(day: Date, minutes: number): Date {
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, minutes);
+}
+
 export function minutesInto(d: Date): number {
   return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 }
@@ -332,11 +347,7 @@ export function resolveDrag(
   if (days.length === 0) return null;
   const snap = (m: number) => Math.round(m / axis.slotMinutes) * axis.slotMinutes;
   const clampDay = (i: number) => Math.min(days.length - 1, Math.max(0, i));
-  const at = (dayBase: Date, minutes: number) => {
-    const d = startOfDay(dayBase);
-    d.setMinutes(minutes);
-    return d;
-  };
+  const at = atMinutes;
 
   if (drag.kind === "create") {
     const a = snap(drag.fromMinutes);
@@ -520,8 +531,7 @@ export function pointToSlot(
   // Keep the whole event on the axis rather than starting it past the bottom.
   const startMinutes = Math.min(Math.max(snapped, axis.minMinutes), axis.maxMinutes - snapMinutes);
 
-  const start = startOfDay(days[dayIndex]);
-  start.setMinutes(startMinutes);
+  const start = atMinutes(days[dayIndex], startMinutes);
   return { start, end: new Date(start.getTime() + durationMinutes * 60_000), dayIndex };
 }
 

@@ -22,6 +22,7 @@ import { useGridDrag } from "./use-grid-drag";
 import { useNow } from "./use-now";
 import {
   DEFAULT_AXIS,
+  atMinutes,
   eventLabel,
   layoutMonthWeek,
   bucketByDay,
@@ -31,7 +32,6 @@ import {
   resolveDrag,
   minutesInto,
   sameDay,
-  startOfDay,
   type LaidOutInput,
   type TimeAxis,
 } from "@/lib/calendar-grid";
@@ -290,9 +290,7 @@ export function TimeGrid({
                 const mins =
                   axis.minMinutes + frac * (axis.maxMinutes - axis.minMinutes);
                 const snapped = Math.floor(mins / axis.slotMinutes) * axis.slotMinutes;
-                const start = startOfDay(day);
-                start.setMinutes(snapped);
-                onSlotClick(start);
+                onSlotClick(atMinutes(day, snapped));
               }}
               style={{
                 backgroundImage:

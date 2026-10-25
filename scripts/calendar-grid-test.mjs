@@ -6,6 +6,7 @@
  */
 
 import {
+  atMinutes,
   eventLabel,
   DEFAULT_AXIS,
   addDays,
@@ -540,6 +541,58 @@ const at = (id, from, to, day = "2026-03-10") => ({
 
   eq("an untitled event is still announceable",
      eventLabel({ title: "   ", start: at(9, 0), end: at(10, 0) }).startsWith("Untitled"), true);
+}
+
+/* ── Daylight saving, in the zones where it bites ─────────────────── */
+
+/**
+ * The rest of this file runs in whatever zone the machine is in. These switch
+ * zone on purpose. Node re-reads process.env.TZ on the next Date call.
+ *
+ * Santiago is the case that matters: Chile springs forward *at* midnight, so
+ * on 6 September 2026 local 00:00 does not exist. startOfDay rightly lands on
+ * 01:00, and building times by adding minutes to that put every create, move,
+ * resize and drop an hour late. New York and London switch at 2am and 1am and
+ * were fine; they are here so the fix is shown not to disturb them.
+ */
+{
+  const prevTZ = process.env.TZ;
+  const hm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const ypx = (min) => (min - DEFAULT_AXIS.minMinutes) / (DEFAULT_AXIS.maxMinutes - DEFAULT_AXIS.minMinutes) * 1050;
+
+  for (const [tz, iso] of [
+    ["America/Santiago", "2026-09-06"],   // springs forward at 00:00
+    ["America/New_York", "2026-03-08"],   // springs forward at 02:00
+    ["America/New_York", "2026-11-01"],   // falls back at 02:00
+    ["Europe/London", "2026-10-25"],      // falls back at 02:00 BST
+  ]) {
+    process.env.TZ = tz;
+    const [y, m, d] = iso.split("-").map(Number);
+    const week = weekDays(new Date(y, m - 1, d, 12), 0);
+    const col = week.findIndex((w) => w.getDate() === d);
+    const at = `${tz} ${iso}`;
+
+    eq(`${at}: 10:00 is 10:00`, hm(atMinutes(week[col], 600)), "10:00");
+    eq(`${at}: 1440 minutes is the next midnight`, atMinutes(week[col], 1440).getDate(), d + 1);
+
+    const created = resolveDrag({ kind: "create", fromDay: col, fromMinutes: 600, toDay: col, toMinutes: 660, moved: true }, week);
+    eq(`${at}: drag-create lands at 10:00`, hm(created.start), "10:00");
+    eq(`${at}: and ends at 11:00`, hm(created.end), "11:00");
+
+    const resized = resolveDrag({ kind: "resize", fromDay: col, fromMinutes: 540, toDay: col, toMinutes: 1380,
+      originStart: new Date(y, m - 1, d, 9), originEnd: new Date(y, m - 1, d, 10), moved: true }, week);
+    eq(`${at}: resize ends at 23:00, not tomorrow`, hm(resized.end), "23:00");
+
+    const moved = resolveDrag({ kind: "move", fromDay: col, fromMinutes: 540, toDay: col, toMinutes: 900,
+      originStart: new Date(y, m - 1, d, 9), originEnd: new Date(y, m - 1, d, 10), moved: true }, week);
+    eq(`${at}: a move lands at 15:00`, hm(moved.start), "15:00");
+
+    const dropped = pointToSlot({ x: 56 + col * 100 + 50, y: ypx(840) }, { left: 0, top: 0, width: 756, height: 1050 },
+      week, DEFAULT_AXIS, { gutter: 56 });
+    eq(`${at}: a drop at 2pm is 2pm`, hm(dropped.start), "14:00");
+  }
+
+  if (prevTZ === undefined) delete process.env.TZ; else process.env.TZ = prevTZ;
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
