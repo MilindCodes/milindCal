@@ -37,6 +37,27 @@ export function sameDay(a: Date, b: Date): boolean {
 }
 
 /**
+ * The calendar days an event touches, each as local midnight.
+ *
+ * Two rules the year view's density tint got wrong:
+ *
+ *   An end at exactly midnight does not reach into that day. Google gives
+ *   every all-day event an exclusive end, so counting `startOfDay(end)` lit up
+ *   the day after every birthday, holiday and day off.
+ *
+ *   Step by calendar day, not by 24 hours. On a 25-hour fall-back day,
+ *   midnight plus 24h is 23:00 the same day: a three-day event across that
+ *   night counted its middle day twice and lost its last day entirely.
+ */
+export function daysCovered(start: Date, end: Date): Date[] {
+  const lastInstant = end.getTime() > start.getTime() ? new Date(end.getTime() - 1) : start;
+  const last = startOfDay(lastInstant);
+  const out: Date[] = [];
+  for (let d = startOfDay(start); d.getTime() <= last.getTime(); d = addDays(d, 1)) out.push(d);
+  return out;
+}
+
+/**
  * The seven days of the week containing `anchor`.
  *
  * `weekStart` is 0 for Sunday, 1 for Monday. Uses date arithmetic rather than

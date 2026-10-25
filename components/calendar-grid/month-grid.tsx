@@ -17,11 +17,11 @@ import { useMemo, type ReactNode } from "react";
 import { useNow } from "./use-now";
 import {
   capMonthWeek,
+  daysCovered,
   eventLabel,
   layoutMonthWeek,
   monthWeeks,
   sameDay,
-  startOfDay,
   type LaidOutInput,
 } from "@/lib/calendar-grid";
 
@@ -194,8 +194,7 @@ export function YearGrid({
   const counts = useMemo(() => {
     const map = new Map<string, number>();
     for (const ev of events) {
-      const last = startOfDay(ev.end);
-      for (let d = startOfDay(ev.start); d <= last; d = new Date(d.getTime() + 86_400_000)) {
+      for (const d of daysCovered(ev.start, ev.end)) {
         const key = d.toDateString();
         map.set(key, (map.get(key) ?? 0) + 1);
       }

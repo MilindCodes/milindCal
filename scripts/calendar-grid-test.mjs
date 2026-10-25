@@ -7,6 +7,7 @@
 
 import {
   atMinutes,
+  daysCovered,
   eventLabel,
   DEFAULT_AXIS,
   addDays,
@@ -591,6 +592,35 @@ const at = (id, from, to, day = "2026-03-10") => ({
       week, DEFAULT_AXIS, { gutter: 56 });
     eq(`${at}: a drop at 2pm is 2pm`, hm(dropped.start), "14:00");
   }
+
+  if (prevTZ === undefined) delete process.env.TZ; else process.env.TZ = prevTZ;
+}
+
+/* ── Which days an event touches (the year view's density) ────────── */
+{
+  const prevTZ = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  const days = (s, e) => daysCovered(s, e).map((d) => d.toDateString());
+
+  // Google sends every all-day event with an exclusive end.
+  eq("a one-day all-day event covers one day",
+     JSON.stringify(days(new Date(2026, 9, 14), new Date(2026, 9, 15))), '["Wed Oct 14 2026"]');
+  eq("a 22:00-to-midnight event does not reach the next day",
+     JSON.stringify(days(new Date(2026, 9, 14, 22), new Date(2026, 9, 15))), '["Wed Oct 14 2026"]');
+  eq("an event ending at 00:01 does reach it",
+     days(new Date(2026, 9, 14, 22), new Date(2026, 9, 15, 0, 1)).length, 2);
+  eq("a zero-length event still covers its day",
+     days(new Date(2026, 9, 14, 9), new Date(2026, 9, 14, 9)).length, 1);
+
+  // Across the 25-hour fall-back day: three days, each once.
+  eq("a three-day event across fall-back covers three days",
+     JSON.stringify(days(new Date(2026, 9, 31, 10), new Date(2026, 10, 2, 15))),
+     '["Sat Oct 31 2026","Sun Nov 01 2026","Mon Nov 02 2026"]');
+  // And the 23-hour spring-forward day.
+  eq("a three-day event across spring-forward covers three days",
+     days(new Date(2026, 2, 7, 10), new Date(2026, 2, 9, 15)).length, 3);
+  eq("every covered day is local midnight",
+     daysCovered(new Date(2026, 9, 31, 10), new Date(2026, 10, 2, 15)).every((d) => d.getHours() === 0), true);
 
   if (prevTZ === undefined) delete process.env.TZ; else process.env.TZ = prevTZ;
 }
