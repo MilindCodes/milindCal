@@ -8,6 +8,8 @@
 import {
   atMinutes,
   daysCovered,
+  keyboardSlotStart,
+  nudgeEvent,
   eventLabel,
   DEFAULT_AXIS,
   addDays,
@@ -623,6 +625,53 @@ const at = (id, from, to, day = "2026-03-10") => ({
      daysCovered(new Date(2026, 9, 31, 10), new Date(2026, 10, 2, 15)).every((d) => d.getHours() === 0), true);
 
   if (prevTZ === undefined) delete process.env.TZ; else process.env.TZ = prevTZ;
+}
+
+/* ── Keyboard nudges ──────────────────────────────────────────────── */
+{
+  const hm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const week = weekDays(new Date(2026, 8, 9, 12), 0);          // Sun 6 - Sat 12 Sep
+  const ev = (h1, m1, h2, m2, day = 9) => ({ start: new Date(2026, 8, day, h1, m1), end: new Date(2026, 8, day, h2, m2) });
+
+  let r = nudgeEvent(ev(9, 0, 10, 0), { slots: 1 }, week);
+  eq("down moves one slot", `${hm(r.start)}-${hm(r.end)}`, "09:15-10:15");
+  r = nudgeEvent(ev(9, 0, 10, 0), { slots: -1 }, week);
+  eq("up moves one slot", `${hm(r.start)}-${hm(r.end)}`, "08:45-09:45");
+  // Off-grid starts snap on the way rather than staying off-grid.
+  eq("down from 9:07 snaps to 9:15", hm(nudgeEvent(ev(9, 7, 10, 7), { slots: 1 }, week).start), "09:15");
+  eq("up from 9:07 snaps to 9:00", hm(nudgeEvent(ev(9, 7, 10, 7), { slots: -1 }, week).start), "09:00");
+  eq("a move keeps the duration", (() => { const x = nudgeEvent(ev(9, 7, 10, 7), { slots: 1 }, week); return (x.end - x.start) / 60000; })(), 60);
+
+  r = nudgeEvent(ev(9, 0, 10, 0), { days: 1 }, week);
+  eq("right moves to the next day at the same time", `${r.start.getDate()} ${hm(r.start)}`, "10 09:00");
+  eq("left at the first day shown stays put", nudgeEvent(ev(9, 0, 10, 0, 6), { days: -1 }, week).start.getDate(), 6);
+  eq("right at the last day shown stays put", nudgeEvent(ev(9, 0, 10, 0, 12), { days: 1 }, week).start.getDate(), 12);
+
+  // The axis is 06:30-24:00.
+  eq("up at the top of the axis stays on it", hm(nudgeEvent(ev(6, 30, 7, 30), { slots: -1 }, week).start), "06:30");
+  eq("down at the bottom keeps the whole event on the axis",
+     hm(nudgeEvent(ev(23, 0, 24, 0), { slots: 1 }, week).start), "23:00");
+
+  r = nudgeEvent(ev(9, 0, 10, 0), { resizeSlots: 1 }, week);
+  eq("shift-down stretches the end", `${hm(r.start)}-${hm(r.end)}`, "09:00-10:15");
+  r = nudgeEvent(ev(9, 0, 9, 15), { resizeSlots: -1 }, week);
+  eq("shift-up never collapses below one slot", `${hm(r.start)}-${hm(r.end)}`, "09:00-09:15");
+  // The case a naive clamp gets wrong: stretching near the bottom must not
+  // move the start up to make room.
+  r = nudgeEvent(ev(23, 30, 23, 45), { resizeSlots: 2 }, week);
+  eq("stretching near midnight keeps the start", hm(r.start), "23:30");
+  eq("and stops at the bottom of the axis", r.end.getDate() + " " + hm(r.end), "10 00:00");
+
+  eq("an event not on any day shown gives null", nudgeEvent(ev(9, 0, 10, 0, 20), { slots: 1 }, week), null);
+
+  // Where Enter on a day column starts a new event.
+  const thursday = new Date(2026, 8, 10);
+  eq("on another day, a keyboard event starts at 9:00",
+     hm(keyboardSlotStart(thursday, new Date(2026, 8, 9, 14, 7))), "09:00");
+  eq("today, at the next slot after now",
+     hm(keyboardSlotStart(new Date(2026, 8, 9), new Date(2026, 8, 9, 14, 7))), "14:15");
+  eq("today but after the axis, at 9:00",
+     hm(keyboardSlotStart(new Date(2026, 8, 9), new Date(2026, 8, 9, 23, 55))), "09:00");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

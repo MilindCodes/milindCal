@@ -17,13 +17,15 @@
  * JavaScript and no measurement pass.
  */
 
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useGridDrag } from "./use-grid-drag";
 import { useNow } from "./use-now";
 import {
   DEFAULT_AXIS,
   atMinutes,
   eventLabel,
+  keyboardSlotStart,
+  nudgeEvent,
   layoutMonthWeek,
   bucketByDay,
   fractionOf,
@@ -102,6 +104,37 @@ export function TimeGrid({
    * clock has to tolerate not having one yet. */
   const now = useNow(nowIndicator);
 
+  /* Keyboard moves. Arrow keys on a focused tile move it a slot or a day,
+   * Shift+Up/Down stretch it, and the result previews in the same box a
+   * pointer drag uses. It commits after a pause, on Enter, or when focus
+   * leaves — not on every keypress, because for a Google event each commit is
+   * a network round trip, and the tile only moves once that returns. Holding
+   * an arrow key would otherwise fire a request per repeat and lose steps to
+   * the stale position. Escape puts it back. */
+  const [keyNudge, setKeyNudge] = useState<{ id: string; start: Date; end: Date } | null>(null);
+  // Read by handlers that outlive the render that made them (the commit timer,
+  // blur), so it is set alongside the state rather than during render.
+  const keyNudgeRef = useRef(keyNudge);
+  const setNudge = useCallback((next: { id: string; start: Date; end: Date } | null) => {
+    keyNudgeRef.current = next;
+    setKeyNudge(next);
+  }, []);
+  const keyCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+
+  const commitKeyNudge = useCallback(() => {
+    if (keyCommitTimer.current) clearTimeout(keyCommitTimer.current);
+    keyCommitTimer.current = null;
+    const pending = keyNudgeRef.current;
+    if (!pending) return;
+    setNudge(null);
+    onEventChange?.(pending.id, pending.start, pending.end);
+  }, [onEventChange, setNudge]);
+
+  useEffect(() => () => {
+    if (keyCommitTimer.current) clearTimeout(keyCommitTimer.current);
+  }, []);
+
   const buckets = useMemo(() => bucketByDay(events, days), [events, days]);
 
   /* Only events with time inside the axis are placed on it. The rest would
@@ -178,9 +211,10 @@ export function TimeGrid({
   // What the drag currently describes, drawn as a preview so the gesture shows
   // its result before it is committed.
   const preview = useMemo(() => {
-    if (!drag || !drag.moved) return null;
-    const r = resolveDrag(drag, days, axis);
-    if (!r) return null;
+    const r = keyNudge
+      ? { start: keyNudge.start, end: keyNudge.end, dayIndex: days.findIndex((d) => sameDay(d, keyNudge.start)) }
+      : drag && drag.moved ? resolveDrag(drag, days, axis) : null;
+    if (!r || r.dayIndex < 0) return null;
     return {
       dayIndex: r.dayIndex,
       top: fractionOf(minutesInto(r.start), axis),
@@ -190,12 +224,13 @@ export function TimeGrid({
       ),
       label: r.start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
     };
-  }, [drag, days, axis]);
+  }, [drag, keyNudge, days, axis]);
 
   const columns = `var(--tg-gutter) repeat(${days.length}, minmax(0, 1fr))`;
 
   return (
     <div className="tg">
+      <div aria-live="polite" className="sr-only">{announcement}</div>
       <div className="tg__head" style={{ gridTemplateColumns: columns }}>
         <div className="tg__corner" />
         {days.map((day) => (
@@ -300,15 +335,64 @@ export function TimeGrid({
                   ` var(--tg-hour-line) 0 1px, transparent 1px ${hourPercent}%)`,
               }}
             >
+              {onSlotClick ? (
+                /* The keyboard's way in. A column is a mouse target with no
+                 * keyboard path, so creating an event needed a pointer. This
+                 * is a real button, out of sight until it has focus. */
+                <button
+                  className="tg__col-create"
+                  onClick={() => onSlotClick(keyboardSlotStart(day, now ?? new Date(), axis))}
+                  type="button"
+                >
+                  New event, {day.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                </button>
+              ) : null}
               {laidOut[i].map((slot) => (
                 <button
                   aria-label={eventLabel(slot.event)}
                   className={
                     "tg__event" +
                     (slot.event.done ? " is-done" : "") +
-                    (drag?.moved && drag.eventId === slot.event.id ? " is-dragging" : "")
+                    ((drag?.moved && drag.eventId === slot.event.id) || keyNudge?.id === slot.event.id
+                      ? " is-dragging"
+                      : "")
                   }
                   key={slot.event.id}
+                  aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowUp Shift+ArrowDown Escape"
+                  onBlur={commitKeyNudge}
+                  onKeyDown={(e) => {
+                    if (!onEventChange) return;
+                    const pending = keyNudgeRef.current;
+                    if (e.key === "Escape" && pending) {
+                      e.preventDefault();
+                      if (keyCommitTimer.current) clearTimeout(keyCommitTimer.current);
+                      setNudge(null);
+                      setAnnouncement(`Move cancelled. ${eventLabel(slot.event)}`);
+                      return;
+                    }
+                    // Enter with a move pending saves it, rather than opening
+                    // the event at a position it has not reached yet.
+                    if (e.key === "Enter" && pending) {
+                      e.preventDefault();
+                      commitKeyNudge();
+                      return;
+                    }
+                    const step =
+                      e.key === "ArrowUp" ? (e.shiftKey ? { resizeSlots: -1 } : { slots: -1 })
+                      : e.key === "ArrowDown" ? (e.shiftKey ? { resizeSlots: 1 } : { slots: 1 })
+                      : e.key === "ArrowLeft" && !e.shiftKey ? { days: -1 }
+                      : e.key === "ArrowRight" && !e.shiftKey ? { days: 1 }
+                      : null;
+                    if (!step) return;
+                    e.preventDefault(); // or the grid scrolls under the event
+                    const base = pending?.id === slot.event.id ? pending : slot.event;
+                    const next = nudgeEvent(base, step, days, axis);
+                    if (!next) return;
+                    setNudge({ id: slot.event.id, start: next.start, end: next.end });
+                    setAnnouncement(eventLabel({ ...slot.event, start: next.start, end: next.end }));
+                    if (keyCommitTimer.current) clearTimeout(keyCommitTimer.current);
+                    keyCommitTimer.current = setTimeout(commitKeyNudge, 700);
+                  }}
                   onClick={() => {
                     if (Date.now() - lastDragEnd.current < CLICK_AFTER_DRAG_MS) return;
                     onEventClick?.(slot.event);

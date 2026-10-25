@@ -8518,6 +8518,35 @@ a.primary-button {
    * Keeping both put 10px between the time and the title. */
 }
 
+/* A column's keyboard way in: out of sight until it has focus, then a pill
+ * across the top of the day it will create an event on. */
+.tg__col-create {
+  position: absolute;
+  inset: 4px 4px auto 4px;
+  z-index: 4;
+  padding: 4px 8px;
+  border: 1px dashed var(--cherry);
+  border-radius: var(--radius-sm);
+  background: var(--salt);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  text-align: left;
+  cursor: pointer;
+  /* Hidden as .sr-only hides, so it stays in the tab order. */
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.tg__col-create:focus-visible {
+  clip: auto;
+  clip-path: none;
+  outline: 2px solid var(--cherry);
+  outline-offset: 1px;
+}
+
 /* ── Time grid interactions ──────────────────────────────────────── */
 
 .tg__col {

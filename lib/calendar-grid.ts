@@ -622,3 +622,73 @@ export function eventLabel(ev: {
   if (ev.done) parts.push("completed");
   return parts.join(", ");
 }
+
+/* ── Keyboard ─────────────────────────────────────────────────────── */
+
+/** One keyboard step: move by slots or days, or stretch the end by slots. */
+export interface Nudge {
+  slots?: number;
+  days?: number;
+  resizeSlots?: number;
+}
+
+/**
+ * Where an event lands after a keyboard nudge — the keyboard's resolveDrag.
+ *
+ * Moving snaps to the slot grid on the way, so an event at 9:07 steps to 9:15
+ * or 9:00 rather than to 9:22. It keeps its duration, as a drag does, and is
+ * clamped so the whole event stays on the axis and inside the days on screen:
+ * an arrow key at the edge does nothing rather than pushing the event out of
+ * view. Stretching never collapses it below one slot. Times are built with
+ * atMinutes, so a DST day lands where it should.
+ *
+ * Null when the event is not on any day shown.
+ */
+export function nudgeEvent(
+  ev: { start: Date; end: Date },
+  nudge: Nudge,
+  days: readonly Date[],
+  axis: TimeAxis = DEFAULT_AXIS,
+): { start: Date; end: Date; dayIndex: number } | null {
+  const from = days.findIndex((d) => sameDay(d, ev.start));
+  if (from === -1) return null;
+  const slot = axis.slotMinutes;
+  const dayIndex = Math.min(days.length - 1, Math.max(0, from + (nudge.days ?? 0)));
+
+  const startMinutes = minutesInto(ev.start);
+  const duration = Math.max(slot, (ev.end.getTime() - ev.start.getTime()) / MS_MINUTE);
+  const slots = nudge.slots ?? 0;
+  let start = startMinutes;
+  if (slots > 0) start = Math.floor(startMinutes / slot) * slot + slots * slot;
+  else if (slots < 0) start = Math.ceil(startMinutes / slot) * slot + slots * slot;
+
+  let length: number;
+  if (nudge.resizeSlots) {
+    // Stretching never moves the start. It stops one slot short of collapsing
+    // and at the bottom of the axis.
+    length = Math.max(slot, duration + nudge.resizeSlots * slot);
+    length = Math.max(slot, Math.min(length, axis.maxMinutes - start));
+  } else {
+    // A move keeps its length and stops at either end of the axis.
+    length = Math.min(duration, axis.maxMinutes - axis.minMinutes);
+    start = Math.min(Math.max(start, axis.minMinutes), axis.maxMinutes - length);
+  }
+
+  const startAt = atMinutes(days[dayIndex], start);
+  return { start: startAt, end: new Date(startAt.getTime() + length * MS_MINUTE), dayIndex };
+}
+
+/**
+ * Where a keyboard-created event starts on `day`: the next slot after now if
+ * that is today and still on the axis, else 9:00 — the time a person most
+ * likely means when they ask for "an event on Thursday".
+ */
+export function keyboardSlotStart(day: Date, now: Date, axis: TimeAxis = DEFAULT_AXIS): Date {
+  const slot = axis.slotMinutes;
+  const nowMinutes = minutesInto(now);
+  const next = Math.ceil(nowMinutes / slot) * slot;
+  const minutes = sameDay(day, now) && next >= axis.minMinutes && next <= axis.maxMinutes - slot
+    ? next
+    : Math.min(Math.max(9 * 60, axis.minMinutes), axis.maxMinutes - slot);
+  return atMinutes(day, minutes);
+}
