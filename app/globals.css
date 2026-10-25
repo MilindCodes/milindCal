@@ -1063,6 +1063,54 @@ textarea {
   transition: width 0.46s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* The undo bar after a delete. Sticky and last in the pane, so it sits under
+ * short content and pins to the bottom edge of a long, scrolled list. */
+.task-undo {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 10px 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--ink);
+  color: var(--salt);
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  box-shadow: var(--shadow-card);
+}
+
+.task-undo__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-undo__btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--salt) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--salt);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.task-undo__btn:hover {
+  background: color-mix(in srgb, var(--salt) 14%, transparent);
+}
+
+.task-undo__btn:focus-visible {
+  outline: 2px solid var(--salt);
+  outline-offset: 2px;
+}
+
 .tasks-sidebar.email-expanded {
   width: 364px;
 }

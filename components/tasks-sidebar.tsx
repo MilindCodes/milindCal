@@ -21,6 +21,9 @@ import { DEFAULT_KANBAN_COLUMNS, KANBAN_COLUMNS_KEY } from "@/lib/models";
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
+/** How long a deleted task can be brought back before it is really deleted. */
+const UNDO_WINDOW_MS = 6000;
+
 const IMPORTANCE_LABELS: Record<TaskImportance, string> = {
   low: "Low", medium: "Med", high: "High",
 };
@@ -646,8 +649,19 @@ export function TasksSidebar({
 }) {
   /* Tasks state — single source of truth lives in EntityStoreProvider so
    * calendar-workspace and docs can mutate the same set. */
-  const tasks = useTasks();
+  const allTasks = useTasks();
   const { setTasks, updateTask: storeUpdateTask, deleteTask: storeDeleteTask, openAsDoc } = useEntityActions();
+
+  /* A deleted task is held, not destroyed, for UNDO_WINDOW_MS. Every view in
+   * this sidebar reads `tasks`, which leaves the held one out, so it vanishes
+   * at once; the store, the server and Asana are only told when the window
+   * closes. Undoing therefore needs no re-creation — the task never left, so
+   * it keeps its place, its links and its facets. */
+  const [pendingDelete, setPendingDelete] = useState<Task | null>(null);
+  const tasks = useMemo(
+    () => (pendingDelete ? allTasks.filter((t) => t.id !== pendingDelete.id) : allTasks),
+    [allTasks, pendingDelete],
+  );
 
   /* KanbanCard and TaskListItem are memo()'d, but that only pays off while
    * their props keep their identity. toggleTask/deleteTask/moveTaskToColumn
@@ -956,14 +970,61 @@ export function TasksSidebar({
     }
   }, [storeUpdateTask]);
 
-  const deleteTask = useCallback((id: string) => {
-    const task = tasksRef.current.find((t) => t.id === id);
-    storeDeleteTask(id);
-    if (task?.asanaGid) {
+  /* Deleting was immediate and irreversible — one stray Delete key, now that
+   * rows answer the keyboard, and the task was gone, from milindDrive and from
+   * Asana too. Now it waits out the undo window first. */
+  const pendingDeleteRef = useRef<Task | null>(null);
+  const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restoreFocusRef = useRef<string | null>(null);
+
+  const finalizeDelete = useCallback(() => {
+    if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+    deleteTimerRef.current = null;
+    const task = pendingDeleteRef.current;
+    if (!task) return;
+    pendingDeleteRef.current = null;
+    setPendingDelete(null);
+    storeDeleteTask(task.id);
+    if (task.asanaGid) {
       fetch(`/api/asana/tasks/${task.asanaGid}`, { method: "DELETE" })
         .catch(() => setAsanaError("Failed to delete task in Asana"));
     }
   }, [storeDeleteTask]);
+
+  const deleteTask = useCallback((id: string) => {
+    const task = tasksRef.current.find((t) => t.id === id);
+    if (!task) return;
+    // One deletion is held at a time: a second delete finishes the first, the
+    // way every mail client's undo bar behaves.
+    finalizeDelete();
+    pendingDeleteRef.current = task;
+    setPendingDelete(task);
+    deleteTimerRef.current = setTimeout(finalizeDelete, UNDO_WINDOW_MS);
+  }, [finalizeDelete]);
+
+  const undoDelete = useCallback(() => {
+    const task = pendingDeleteRef.current;
+    if (!task) return;
+    if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+    deleteTimerRef.current = null;
+    pendingDeleteRef.current = null;
+    restoreFocusRef.current = task.id;
+    setPendingDelete(null);
+  }, []);
+
+  // Leaving the sidebar finishes a held deletion rather than abandoning it.
+  useEffect(() => () => finalizeDelete(), [finalizeDelete]);
+
+  // After an undo, put focus back on the task that came back, so a keyboard
+  // user who deleted by accident is returned to where they were.
+  useEffect(() => {
+    const id = restoreFocusRef.current;
+    if (!id) return;
+    const row = document.querySelector<HTMLElement>(`[data-task-row][data-task-id="${CSS.escape(id)}"]`);
+    if (!row) return;
+    restoreFocusRef.current = null;
+    row.focus();
+  });
 
   const moveTaskToColumn = useCallback((id: string, colId: string) => {
     const isDone = colId === "done";
@@ -1205,6 +1266,13 @@ export function TasksSidebar({
        * other complementary region. */
       role="complementary"
       aria-label="Tasks and email"
+      onKeyDown={(e) => {
+        if (!pendingDelete || e.key.toLowerCase() !== "z" || !(e.metaKey || e.ctrlKey) || e.shiftKey) return;
+        const t = e.target as HTMLElement;
+        if (t.closest("input, textarea, [contenteditable='true']")) return;
+        e.preventDefault();
+        undoDelete();
+      }}
       animate={{ opacity: 1, x: 0 }}
       className={`tasks-sidebar${boardExpanded ? " board-expanded" : ""}${activePanel === "emails" && !boardExpanded ? " email-expanded" : ""}${emailBoardExpanded ? " email-reader-mode" : ""}`}
       initial={{ opacity: 0, x: 18 }}
@@ -2009,6 +2077,18 @@ export function TasksSidebar({
           </motion.section>
         )}
       </AnimatePresence>
+
+      {/* Last, so `position: sticky` pins it to the bottom of the visible pane. */}
+      {pendingDelete ? (
+        <div className="task-undo" role="status">
+          <span className="task-undo__text">
+            Deleted “{pendingDelete.title || "Untitled"}”
+          </span>
+          <button className="task-undo__btn" onClick={undoDelete} type="button">
+            Undo
+          </button>
+        </div>
+      ) : null}
     </motion.aside>
   );
 }
