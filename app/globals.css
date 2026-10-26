@@ -5579,7 +5579,9 @@ textarea {
   background: rgba(255, 255, 255, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: var(--radius-lg);
-  padding: 8px 12px;
+  /* 6px rather than 8px: the input inside grew to a 24px target, and the box
+   * keeps its height by giving the difference back here. */
+  padding: 6px 12px;
   margin: 0 16px 16px;
   flex-shrink: 0;
   color: #8d6e63;
@@ -5598,6 +5600,7 @@ textarea {
 .gd-search input {
   flex: 1;
   min-width: 0;
+  min-height: 24px;
   background: none;
   border: none;
   outline: none;
@@ -7940,6 +7943,11 @@ a.primary-button {
 .sheet__formula {
   flex: 1;
   min-width: 0;
+  /* The whole bar is the target, not the 20px line of text inside it. The
+   * input is borderless and transparent, so filling the bar's height changes
+   * nothing you can see and makes it 24px or more to click. */
+  align-self: stretch;
+  min-height: 24px;
   border: none;
   background: transparent;
   font-family: var(--font-mono);
@@ -7983,7 +7991,11 @@ a.primary-button {
   font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.03em;
+  /* --muted on --paper-2 measured 3.94:1. These headers sit on the darker
+   * paper, so they need a bigger step toward ink than the calendar's labels:
+   * 85% clears AA at 4.79:1, where 90% would land on 4.51 — too close. */
   color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 85%, var(--ink));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -8083,7 +8095,9 @@ a.primary-button {
   font-size: 0.68rem;
   font-style: italic;
   font-weight: 600;
+  /* 4.38:1 with plain --muted on the bar; 10% toward ink is 5.02:1. */
   color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 90%, var(--ink));
   padding-right: 2px;
   border-right: 1px solid var(--line);
   padding-left: 2px;
