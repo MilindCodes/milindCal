@@ -8320,7 +8320,9 @@ a.primary-button {
   font-size: 0.62rem;
   font-weight: 600;
   letter-spacing: 0.09em;
+  /* 4.38:1 at this size with plain --muted; 10% toward ink clears AA. */
   color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 90%, var(--ink));
 }
 
 .tg__daynum {
@@ -8703,7 +8705,9 @@ a.primary-button {
   font-size: 0.62rem;
   font-weight: 600;
   letter-spacing: 0.09em;
+  /* 4.38:1 at this size with plain --muted; 10% toward ink clears AA. */
   color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 90%, var(--ink));
   border-right: 1px solid var(--line);
 }
 
@@ -8749,9 +8753,13 @@ a.primary-button {
 
 /* Days from the neighbouring month stay legible but recede — dimming them to
  * near-invisible makes the grid's shape harder to read, not easier. */
+/* Faded by colour, not opacity. `--muted` at opacity 0.65 measured 2.41:1
+ * against the outside-month cell — a day number few people could read. Muted
+ * nudged 10% toward ink is 5.0:1 there and still clearly lighter than an
+ * in-month day, so the de-emphasis survives. */
 .mg__cell.is-outside .mg__daynum {
   color: var(--muted);
-  opacity: 0.65;
+  color: color-mix(in srgb, var(--muted) 90%, var(--ink));
 }
 
 .mg__cell.is-outside {
