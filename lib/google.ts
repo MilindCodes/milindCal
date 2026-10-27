@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { auth as calendarAuth, calendar } from "@googleapis/calendar";
 import { auth as gmailAuth, gmail } from "@googleapis/gmail";
 import { auth as peopleAuth, people } from "@googleapis/people";
@@ -39,6 +40,119 @@ export function getPeopleClient(accessToken: string) {
   const oauth = new peopleAuth.OAuth2();
   oauth.setCredentials({ access_token: accessToken });
   return people({ version: "v1", auth: oauth });
+}
+
+/* ── Calendar-colour cache ──────────────────────────────────────────────
+ *
+ * The only thing a calendarList fetch contributes to the event routes is a
+ * calendarId → backgroundColor map, and a user's calendar list changes very
+ * rarely. Fetching it on every events request added a full Google round-trip
+ * (~200ms) plus quota to every calendar navigation that missed the client
+ * cache.
+ *
+ * Unlike the watch-state store — which deliberately refuses to cache because
+ * stale reads there would clobber concurrent writes from other instances —
+ * this is read-only derived data with a short TTL, so a per-instance cache is
+ * safe: the worst case is a recoloured calendar taking up to TTL to show its
+ * new colour.
+ *
+ * Keyed by a hash of the access token so two signed-in users on the same warm
+ * container never share a map, and so the raw token isn't held as a map key.
+ *
+ * Shared by the list route and the single-event routes. The write routes used
+ * to map Google's reply with no calendar colour at all, so an event that takes
+ * its colour from its calendar came back blue after every save or move.
+ */
+const COLOR_CACHE_TTL_MS = 5 * 60 * 1000;
+const COLOR_CACHE_MAX_ENTRIES = 50;
+
+type ColorMap = Map<string, string>;
+const colorCache = new Map<string, { colors: ColorMap; at: number }>();
+
+function cacheKeyFor(accessToken: string) {
+  return createHash("sha256").update(accessToken).digest("base64url").slice(0, 22);
+}
+
+/** Returns the calendarId → backgroundColor map, fetching it only on a miss.
+ *  Never throws: colours are cosmetic, so a failure degrades to no colours
+ *  rather than failing the whole request. */
+export async function getCalendarColors(
+  calendarClient: ReturnType<typeof getCalendarClient>,
+  accessToken: string
+): Promise<ColorMap> {
+  const key = cacheKeyFor(accessToken);
+  const now = Date.now();
+
+  const hit = colorCache.get(key);
+  if (hit && now - hit.at < COLOR_CACHE_TTL_MS) return hit.colors;
+
+  try {
+    const response = await calendarClient.calendarList.list({ minAccessRole: "reader" });
+    const colors: ColorMap = new Map();
+    for (const item of response.data.items ?? []) {
+      if (!item.id) continue;
+      colors.set(item.id, item.backgroundColor ?? "#4f8cff");
+    }
+
+    // Bound the map so a long-lived container can't accumulate entries for
+    // every token it has ever seen. Oldest insertion goes first.
+    if (colorCache.size >= COLOR_CACHE_MAX_ENTRIES) {
+      const oldest = colorCache.keys().next().value;
+      if (oldest !== undefined) colorCache.delete(oldest);
+    }
+    colorCache.set(key, { colors, at: now });
+    return colors;
+  } catch (err) {
+    console.error("[events] calendarList fetch failed — rendering without calendar colours:", err);
+    // Serve a stale map if we have one; otherwise fall back to per-event colours.
+    return hit?.colors ?? new Map();
+  }
+}
+
+/** The HTTP status a googleapis call failed with, if it says. */
+export function googleErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const e = error as { code?: unknown; status?: unknown; response?: { status?: unknown } };
+  const status = e.response?.status ?? e.status ?? e.code;
+  return typeof status === "number" ? status : undefined;
+}
+
+/* ── Outgoing mail ──────────────────────────────────────────────────── */
+
+/** Header values may not contain line breaks: one would end the header and
+ *  let the rest of the value write headers of its own. */
+function headerValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+/** RFC 2047: a header is 7-bit ASCII, so anything else travels encoded. A raw
+ *  UTF-8 subject reaches some clients as mojibake. */
+function encodeHeaderWord(value: string): string {
+  if (/^[\x00-\x7F]*$/.test(value)) return value;
+  return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
+}
+
+/**
+ * A plain-text RFC 5322 message, ready to base64url for `messages.send`.
+ *
+ * The blank line between the headers and the body is the one part of this
+ * format that is not optional, and both send paths used to lose it: they
+ * built the lines as an array and ran `.filter(Boolean)` to drop the unused
+ * Cc/Bcc slots, which dropped the empty separator with them. The body then
+ * read as one more header line — "Re: tomorrow" became a header named "Re" —
+ * and the mail went out empty or garbled. Optional headers are filtered here;
+ * the separator is added after.
+ */
+export function buildRawEmail(headers: Array<[name: string, value: string | undefined]>, body: string): string {
+  const lines = headers
+    .filter(([, value]) => value !== undefined && value.trim() !== "")
+    .map(([name, value]) => {
+      const clean = headerValue(value as string);
+      return `${name}: ${name.toLowerCase() === "subject" ? encodeHeaderWord(clean) : clean}`;
+    });
+  lines.push("Content-Type: text/plain; charset=UTF-8", "MIME-Version: 1.0");
+  // CRLF line endings throughout, including inside the body.
+  return `${lines.join("\r\n")}\r\n\r\n${body.replace(/\r?\n/g, "\r\n")}`;
 }
 
 function isEventTypeId(value: unknown): value is EventTypeId {

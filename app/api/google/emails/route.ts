@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getGmailClient, mapGoogleMessageToClient } from "@/lib/google";
+import { buildRawEmail, getGmailClient, mapGoogleMessageToClient } from "@/lib/google";
 import type { GmailMessageSummary } from "@/lib/models";
 
 function toBase64Url(value: string) {
@@ -151,18 +151,15 @@ export async function POST(req: Request) {
 
   try {
     const gmail = getGmailClient(session.accessToken);
-    const rawMessage = [
-      `To: ${to}`,
-      cc ? `Cc: ${cc}` : "",
-      bcc ? `Bcc: ${bcc}` : "",
-      `Subject: ${subject}`,
-      "Content-Type: text/plain; charset=UTF-8",
-      "MIME-Version: 1.0",
-      "",
+    const rawMessage = buildRawEmail(
+      [
+        ["To", to],
+        ["Cc", cc],
+        ["Bcc", bcc],
+        ["Subject", subject]
+      ],
       emailBody
-    ]
-      .filter(Boolean)
-      .join("\r\n");
+    );
 
     await gmail.users.messages.send({
       userId: "me",

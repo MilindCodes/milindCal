@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getCalendarClient, mapClientEventPatchToGoogle, mapGoogleEventToClient } from "@/lib/google";
+import {
+  getCalendarClient,
+  getCalendarColors,
+  googleErrorStatus,
+  mapClientEventPatchToGoogle,
+  mapGoogleEventToClient
+} from "@/lib/google";
 import type { GoogleEventPayload } from "@/lib/models";
 import { touchUserSync } from "@/lib/watch-store";
 
@@ -22,13 +28,14 @@ export async function GET(req: Request, context: { params: Promise<{ eventId: st
   const calendar = getCalendarClient(session.accessToken);
 
   try {
-    const [eventRes, calRes] = await Promise.all([
+    // The colour comes from the shared cache — usually no request at all —
+    // rather than a calendarList.get on every open.
+    const [eventRes, colors] = await Promise.all([
       calendar.events.get({ calendarId, eventId }),
-      calendar.calendarList.get({ calendarId }).catch(() => null),
+      getCalendarColors(calendar, session.accessToken),
     ]);
-    const calendarColor = calRes?.data?.backgroundColor ?? undefined;
     return NextResponse.json({
-      event: mapGoogleEventToClient(eventRes.data, calendarId, calendarColor),
+      event: mapGoogleEventToClient(eventRes.data, calendarId, colors.get(calendarId)),
     }, {
       headers: { "Cache-Control": "private, max-age=15, stale-while-revalidate=30" }
     });
@@ -45,26 +52,35 @@ export async function PATCH(req: Request, context: { params: Promise<{ eventId: 
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
-  const calendarId = body.calendarId;
+  const body = await req.json().catch(() => null);
+  const calendarId = body?.calendarId;
   // Partial on purpose: a key the client leaves out is a field Google keeps.
-  const event = body.event as Partial<GoogleEventPayload>;
+  const event = body?.event as Partial<GoogleEventPayload> | undefined;
 
   if (!calendarId || !event || !eventId) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
+  // Only email guests when the caller is managing the guest list. A time
+  // or title change with no attendees key leaves them, and their inboxes,
+  // alone — unless the caller says otherwise: a drag sends only the new time
+  // and asks for guests to be told, as Google Calendar itself does.
+  const sendUpdates: "all" | "none" =
+    body.sendUpdates === "all" || body.sendUpdates === "none"
+      ? body.sendUpdates
+      : event.attendees?.length ? "all" : "none";
+
   const calendar = getCalendarClient(session.accessToken);
   try {
-    const updated = await calendar.events.patch({
-      calendarId,
-      eventId,
-      // Only email guests when the caller is managing the guest list. A time
-      // or title change with no attendees key leaves them, and their inboxes,
-      // alone — which is also what it did before, minus deleting them.
-      sendUpdates: event.attendees?.length ? "all" : "none",
-      requestBody: mapClientEventPatchToGoogle(event)
-    });
+    const [updated, colors] = await Promise.all([
+      calendar.events.patch({
+        calendarId,
+        eventId,
+        sendUpdates,
+        requestBody: mapClientEventPatchToGoogle(event)
+      }),
+      getCalendarColors(calendar, session.accessToken),
+    ]);
 
     // The event is already updated on Google's side at this point — don't let a
     // sync-signal hiccup (e.g. a transient KV blip) fall into the catch below and
@@ -76,9 +92,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ eventId: 
     }
 
     return NextResponse.json({
-      event: mapGoogleEventToClient(updated.data, calendarId)
+      event: mapGoogleEventToClient(updated.data, calendarId, colors.get(calendarId))
     });
-  } catch {
+  } catch (err) {
+    console.error("[events] update failed:", err);
     return NextResponse.json({ error: "Failed to update event" }, { status: 500 });
   }
 }
@@ -99,11 +116,22 @@ export async function DELETE(req: Request, context: { params: Promise<{ eventId:
   }
 
   const calendar = getCalendarClient(session.accessToken);
-  await calendar.events.delete({
-    calendarId,
-    eventId,
-    sendUpdates: "all"
-  });
+  try {
+    await calendar.events.delete({
+      calendarId,
+      eventId,
+      sendUpdates: "all"
+    });
+  } catch (err) {
+    // Already gone is the outcome the caller asked for. Deleting an event
+    // that was removed on another device answered 410, which escaped as an
+    // unhandled throw — an HTML 500 the client reported as a failed delete.
+    const status = googleErrorStatus(err);
+    if (status !== 404 && status !== 410) {
+      console.error("[events] delete failed:", err);
+      return NextResponse.json({ error: "Failed to delete event" }, { status: status === 403 ? 403 : 500 });
+    }
+  }
 
   // The event is already deleted on Google's side at this point — a sync-signal
   // hiccup must not report an already-successful delete as a failure.

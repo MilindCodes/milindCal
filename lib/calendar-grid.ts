@@ -307,20 +307,32 @@ export function bucketByDay<T extends LaidOutInput & { allDay?: boolean }>(
 ): Map<number, T[]> {
   const buckets = new Map<number, T[]>();
   days.forEach((_, i) => buckets.set(i, []));
+  if (days.length === 0) return buckets;
+
+  // Day bounds once, not once per event: this runs on every grid render
+  // against every event the calendar holds, and rebuilt two Dates per event
+  // per day to ask the same seven questions.
+  const starts = days.map((day) => startOfDay(day));
+  const ends = starts.map((start) => addDays(start, 1));
+  const first = starts[0].getTime();
+  const last = ends[ends.length - 1].getTime();
 
   for (const ev of events) {
     if (ev.allDay) continue;
-    days.forEach((day, i) => {
-      const dayStart = startOfDay(day);
-      const dayEnd = addDays(dayStart, 1);
-      if (ev.start.getTime() >= dayEnd.getTime() || ev.end.getTime() <= dayStart.getTime()) return;
+    const s = ev.start.getTime();
+    const e = ev.end.getTime();
+    if (s >= last || e <= first) continue;
+    for (let i = 0; i < days.length; i++) {
+      const dayStart = starts[i];
+      const dayEnd = ends[i];
+      if (s >= dayEnd.getTime() || e <= dayStart.getTime()) continue;
       const clipped = {
         ...ev,
-        start: ev.start.getTime() < dayStart.getTime() ? dayStart : ev.start,
-        end: ev.end.getTime() > dayEnd.getTime() ? dayEnd : ev.end,
+        start: s < dayStart.getTime() ? dayStart : ev.start,
+        end: e > dayEnd.getTime() ? dayEnd : ev.end,
       } as T;
       buckets.get(i)!.push(clipped);
-    });
+    }
   }
   return buckets;
 }
@@ -437,6 +449,9 @@ export function layoutMonthWeek<T extends LaidOutInput>(
   if (week.length === 0) return [];
   const weekStart = startOfDay(week[0]);
   const weekEnd = addDays(startOfDay(week[week.length - 1]), 1);
+  // Hoisted for the same reason as in bucketByDay.
+  const dayStarts = week.map((day) => startOfDay(day).getTime());
+  const dayEnds = week.map((day) => addDays(startOfDay(day), 1).getTime());
 
   const spans: MonthSegment<T>[] = [];
   for (const ev of events) {
@@ -444,12 +459,12 @@ export function layoutMonthWeek<T extends LaidOutInput>(
     let startCol = 0;
     let endCol = week.length - 1;
     for (let i = 0; i < week.length; i++) {
-      const dayStart = startOfDay(week[i]);
-      const dayEnd = addDays(dayStart, 1);
-      if (ev.start.getTime() >= dayStart.getTime() && ev.start.getTime() < dayEnd.getTime()) startCol = i;
+      const dayStart = dayStarts[i];
+      const dayEnd = dayEnds[i];
+      if (ev.start.getTime() >= dayStart && ev.start.getTime() < dayEnd) startCol = i;
       // An event ending exactly at midnight belongs to the previous day, not
       // to the one it touches for zero minutes.
-      if (ev.end.getTime() > dayStart.getTime() && ev.end.getTime() <= dayEnd.getTime()) endCol = i;
+      if (ev.end.getTime() > dayStart && ev.end.getTime() <= dayEnd) endCol = i;
     }
     if (ev.start.getTime() < weekStart.getTime()) startCol = 0;
     if (ev.end.getTime() > weekEnd.getTime()) endCol = week.length - 1;
@@ -576,6 +591,33 @@ export function pointToDay(
   return startOfDay(weeks[row][col]);
 }
 
+/* ── Formatting ───────────────────────────────────────────────────── */
+
+/* `toLocaleTimeString(undefined, options)` builds a fresh Intl.DateTimeFormat
+ * on every call, and the grid made several per tile per render — an aria
+ * label, a time chip, a drag preview. During a drag that is every frame. The
+ * formatters are made once, lazily, so nothing locale-dependent runs on the
+ * server. */
+let LABEL_DAY_FMT: Intl.DateTimeFormat | null = null;
+let CLOCK_FMT: Intl.DateTimeFormat | null = null;
+let HOUR_FMT: Intl.DateTimeFormat | null = null;
+
+const LABEL_DAY = {
+  format: (d: Date) =>
+    (LABEL_DAY_FMT ??= new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" })).format(d),
+};
+
+/** "9:05 AM" — what `toLocaleTimeString(undefined, { hour, minute: "2-digit" })` gave. */
+export function clockTime(d: Date): string {
+  return (CLOCK_FMT ??= new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })).format(d);
+}
+
+/** "9 AM" on the hour and "9:30 AM" off it, the compact form a tile uses. */
+export function compactTime(d: Date): string {
+  if (d.getMinutes()) return clockTime(d);
+  return (HOUR_FMT ??= new Intl.DateTimeFormat(undefined, { hour: "numeric" })).format(d);
+}
+
 /* ── Announcing an event ──────────────────────────────────────────── */
 
 /**
@@ -600,10 +642,8 @@ export function eventLabel(ev: {
   allDay?: boolean;
   done?: boolean;
 }): string {
-  const day = (d: Date) =>
-    d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-  const time = (d: Date) =>
-    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const day = (d: Date) => LABEL_DAY.format(d);
+  const time = (d: Date) => clockTime(d);
 
   const title = ev.title.trim() || "Untitled";
   const parts: string[] = [title];

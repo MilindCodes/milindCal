@@ -180,6 +180,10 @@ export async function patchDoc(
   token: string,
   id: string,
   patch: Partial<MilindDocFile>,
+  /** `keepalive` lets the request outlive the page — for the save that runs
+   *  as the tab closes. Browsers cap a keepalive body at 64 KB, so a larger
+   *  doc goes as an ordinary request and takes its chances. */
+  opts?: { keepalive?: boolean },
 ): Promise<MilindDocFile> {
   // Only send fields the server understands; skip id / createdAt / updatedAt.
   //
@@ -205,9 +209,11 @@ export async function patchDoc(
   if ("columnId" in patch) body.columnId = patch.columnId ?? null;
   if ("sheet" in patch) body.sheet = patch.sheet ?? null;
 
+  const json = JSON.stringify(body);
   const d = await driveRequest<unknown>(token, `/api/docs/${id}`, {
     method: "PATCH",
-    body: JSON.stringify(body),
+    body: json,
+    keepalive: Boolean(opts?.keepalive) && json.length < 60_000,
   });
   const savedDoc = toDocFile(d);
   warnIfFacetsDropped(patch as unknown as Record<string, unknown>, savedDoc as unknown as Record<string, unknown>);

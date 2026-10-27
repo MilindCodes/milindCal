@@ -17,12 +17,13 @@
  * JavaScript and no measurement pass.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useGridDrag } from "./use-grid-drag";
 import { useNow } from "./use-now";
 import {
   DEFAULT_AXIS,
   atMinutes,
+  clockTime,
   eventLabel,
   keyboardSlotStart,
   nudgeEvent,
@@ -79,7 +80,11 @@ function formatHour(minutes: number): string {
   return `${display}${suffix}`;
 }
 
-export function TimeGrid({
+/* Memoized: the workspace re-renders for reasons that have nothing to do with
+ * the grid — the loading flag, the status pill, the nav title animation, a
+ * doc autosave — and each of those used to re-render every tile in the week.
+ * Every prop the workspace passes is now stable until it actually changes. */
+export const TimeGrid = memo(function TimeGrid({
   days,
   events,
   axis = DEFAULT_AXIS,
@@ -222,7 +227,7 @@ export function TimeGrid({
         0.012,
         fractionOf(minutesInto(r.end) || axis.maxMinutes, axis) - fractionOf(minutesInto(r.start), axis),
       ),
-      label: r.start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+      label: clockTime(r.start),
     };
   }, [drag, keyNudge, days, axis]);
 
@@ -285,7 +290,7 @@ export function TimeGrid({
                   * event. */}
                 {!seg.event.allDay && !seg.continuesBefore ? (
                   <span className="tg__chip-time">
-                    {seg.event.start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                    {clockTime(seg.event.start)}
                   </span>
                 ) : null}
                 {seg.event.title}
@@ -444,4 +449,4 @@ export function TimeGrid({
       </div>
     </div>
   );
-}
+});

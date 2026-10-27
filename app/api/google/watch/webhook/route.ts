@@ -49,7 +49,12 @@ export async function POST(req: Request) {
     }
   }
 
-  await touchUserSync(channel.userEmail);
+  // Google opens every channel with a "sync" message that only confirms the
+  // channel exists; nothing on the calendar changed, so it is not a reason to
+  // send every open tab back for a full refetch.
+  if (req.headers.get("x-goog-resource-state") !== "sync") {
+    await touchUserSync(channel.userEmail);
+  }
 
   return NextResponse.json({ ok: true });
 }

@@ -44,20 +44,26 @@ function CalendarEventTileImpl({ event, timeText, isStart, allDay }: CalendarEve
         ) : null}
         <span className="fc-event-tile-title">{event.title || "(untitled)"}</span>
       </div>
-      <button
+      <span
         ref={setNodeRef}
-        type="button"
         className="universal-event-handle"
         aria-label="Drag event to another view"
-        // stop FC's pointer handlers from firing so it doesn't start moving
-        // the event inside the grid while dnd-kit is taking it out.
-        onPointerDown={(e) => { e.stopPropagation(); }}
-        onMouseDown={(e) => { e.stopPropagation(); }}
         {...listeners}
         {...attributes}
+        /* After the spread, and calling through to it. dnd-kit's PointerSensor
+         * listens on pointerdown, so `{...listeners}` replaced a stopPropagation
+         * written before it. The press then reached the tile underneath, which
+         * started the grid's own move drag alongside dnd-kit's: drop an event
+         * on the task board and the grid also committed a move, rescheduling
+         * the meeting in Google to wherever the pointer had clamped. */
+        onPointerDown={(e) => {
+          listeners?.onPointerDown?.(e);
+          e.stopPropagation();
+        }}
+        onMouseDown={(e) => { e.stopPropagation(); }}
       >
         <GripVertical size={10} />
-      </button>
+      </span>
     </div>
   );
 }

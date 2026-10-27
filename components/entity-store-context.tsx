@@ -447,7 +447,10 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
         if (patch.importance !== undefined) taskPatch.importance = patch.importance;
         if (patch.dueDate !== undefined) taskPatch.dueDate = patch.dueDate;
         if (patch.columnId !== undefined) taskPatch.columnId = patch.columnId;
-        updateTask(id, taskPatch);
+        // Nothing a task stores — a graph position, a node colour. Sending
+        // it anyway was an empty PATCH to milindDrive for every task-backed
+        // doc each time the docs graph settled.
+        if (Object.keys(taskPatch).length > 0) updateTask(id, taskPatch);
       }
       return;
     }
@@ -509,6 +512,42 @@ export function EntityStoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { updateDocRef.current = updateDoc; }, [updateDoc]);
   useEffect(() => { deleteDocRef.current = deleteDoc; }, [deleteDoc]);
+
+  /* Send every debounced doc save now.
+   *
+   * A doc edit reaches milindDrive 800ms after the last change, and nothing
+   * else keeps it: with a token, the localStorage mirror is off. So the last
+   * sentence typed before closing the tab — or before the laptop lid shut —
+   * was only ever in memory, and was gone. Hiding or leaving the page now
+   * sends what is pending, with keepalive so a closing tab still delivers it. */
+  const flushDocPatches = useCallback((keepalive: boolean) => {
+    const timers = docPatchTimers.current;
+    const pending = docPendingPatches.current;
+    for (const timer of timers.values()) clearTimeout(timer);
+    timers.clear();
+    const token = tokenRef.current;
+    if (token) {
+      for (const [id, patch] of pending) {
+        drivePatchDoc(token, id, patch, { keepalive }).catch(console.error);
+      }
+    }
+    pending.clear();
+  }, []);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flushDocPatches(true);
+    };
+    const onPageHide = () => flushDocPatches(true);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+      // Unmounting (signing out) must not drop a pending save either.
+      flushDocPatches(false);
+    };
+  }, [flushDocPatches]);
 
   // ── Link mutators ──────────────────────────────────────────────
 

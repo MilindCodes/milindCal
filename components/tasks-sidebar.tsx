@@ -49,6 +49,11 @@ function resolveColumnId(task: Task, columns: KanbanColumn[]): string {
   return nonDone?.id ?? "done";
 }
 
+/** `YYYY-MM-DD` from a date's local parts. */
+function localDateString(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function formatDue(dateStr: string): string {
   return new Date(dateStr + "T00:00:00").toLocaleDateString(undefined, {
     month: "short", day: "numeric",
@@ -535,12 +540,17 @@ const TimelineView = memo(function TimelineView({
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  /* Local calendar dates, because that is what a due date is: the date input
+   * writes the user's own YYYY-MM-DD. toISOString() gives the UTC date, so in
+   * the evening west of Greenwich "today" was already tomorrow and today's
+   * tasks were filed as overdue — and in the early morning east of it, as in
+   * India, today's tasks sat under "Tomorrow". */
+  const todayStr = useMemo(() => localDateString(new Date()), []);
   const tomorrowStr = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10);
+    const d = new Date(); d.setDate(d.getDate() + 1); return localDateString(d);
   }, []);
   const weekEndStr = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10);
+    const d = new Date(); d.setDate(d.getDate() + 7); return localDateString(d);
   }, []);
 
   const groups = useMemo(() => {
@@ -650,7 +660,7 @@ export function TasksSidebar({
   /* Tasks state — single source of truth lives in EntityStoreProvider so
    * calendar-workspace and docs can mutate the same set. */
   const allTasks = useTasks();
-  const { setTasks, updateTask: storeUpdateTask, deleteTask: storeDeleteTask, openAsDoc } = useEntityActions();
+  const { setTasks, addTask: storeAddTask, updateTask: storeUpdateTask, deleteTask: storeDeleteTask, openAsDoc } = useEntityActions();
 
   /* A deleted task is held, not destroyed, for UNDO_WINDOW_MS. Every view in
    * this sidebar reads `tasks`, which leaves the held one out, so it vanishes
@@ -691,6 +701,11 @@ export function TasksSidebar({
 
   /* Email state */
   const [emails, setEmails] = useState<GmailMessageSummary[]>([]);
+  /* Whether the inbox has been fetched at all. "No emails yet" cannot be read
+   * off emails.length: an empty inbox also has length 0, and the auto-load
+   * effect below took that as "not loaded", fetched again, got zero again,
+   * and looped — a Gmail request every render for anyone at inbox zero. */
+  const [emailsLoaded, setEmailsLoaded] = useState(false);
   const [emailsLoading, setEmailsLoading] = useState(false);
   const [emailsError, setEmailsError] = useState<string | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
@@ -937,10 +952,15 @@ export function TasksSidebar({
         ]);
       } catch {
         setAsanaError("Couldn't create task in Asana — saved locally instead");
-        setTasks((prev) => [localDraft, ...prev]);
+        storeAddTask(localDraft);
       }
     } else {
-      setTasks((prev) => [localDraft, ...prev]);
+      /* Through the store's addTask, not setTasks. setTasks only changes what
+       * is on screen: with milindDrive connected nothing persists the raw
+       * array, so every task typed into this box was gone on the next reload.
+       * addTask is what sends it to the server. (Asana tasks above still use
+       * setTasks on purpose — Asana is their store, not milindDrive.) */
+      storeAddTask(localDraft);
     }
   };
 
@@ -1050,11 +1070,13 @@ export function TasksSidebar({
       }
       const data = (await response.json()) as { emails: GmailMessageSummary[] };
       setEmails(Array.isArray(data.emails) ? data.emails : []);
+      setEmailsLoaded(true);
     } catch (error) {
       if ((error as Error).name === "AbortError") return;
       setEmailsError(error instanceof Error ? error.message : "Unable to sync Gmail");
     } finally {
-      setEmailsLoading(false);
+      // An aborted request was replaced by a newer one, which owns the flag.
+      if (readEmailsAbortRef.current === controller) setEmailsLoading(false);
     }
   }, []);
 
@@ -1238,9 +1260,9 @@ export function TasksSidebar({
 
   useEffect(() => {
     if (activePanel !== "emails") return;
-    if (emails.length > 0 || emailsLoading || emailsError) return;
+    if (emailsLoaded || emailsLoading || emailsError) return;
     void readEmails();
-  }, [activePanel, emails.length, emailsLoading, emailsError, readEmails]);
+  }, [activePanel, emailsLoaded, emailsLoading, emailsError, readEmails]);
 
   useEffect(() => {
     if (activePanel === "emails") void fetchContacts();

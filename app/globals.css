@@ -6515,10 +6515,18 @@ textarea {
   white-space: nowrap;
 }
 
-/* Override the base rule since our handle now lives inside a real button element. */
+/* The handle is a span with role="button": the tile it sits in is already a
+ * <button>, and a button inside a button is invalid markup. */
 .universal-event-handle {
-  appearance: none;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 1px;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  cursor: grab;
+  touch-action: none;
 }
 
 /* ── Backlinks strip ──────────────────────────────────────────────── */

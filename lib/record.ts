@@ -418,7 +418,7 @@ export function recordFromEvent(e: CalendarEvent): MilindRecord {
  * Only records that actually render count. Suppressing Google's copy of an
  * event no record is drawing would make the event vanish rather than dedupe.
  */
-export function adoptedGoogleKeys(records: readonly MilindRecord[]): Set<string> {
+export function adoptedGoogleKeys(records: readonly Pick<MilindRecord, "start" | "google">[]): Set<string> {
   const keys = new Set<string>();
   for (const r of records) {
     if (r.start && r.google?.eventId && r.google.calendarId) {

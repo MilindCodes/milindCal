@@ -13,10 +13,11 @@
  * week, with its cut end drawn open so it reads as continuing.
  */
 
-import { useMemo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import { useNow } from "./use-now";
 import {
   capMonthWeek,
+  compactTime,
   daysCovered,
   eventLabel,
   layoutMonthWeek,
@@ -54,7 +55,13 @@ const WEEKDAY_LABELS = (weekStart: 0 | 1) =>
     return d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase();
   });
 
-export function MonthGrid({
+/** A local calendar day as a number, cheaper to build and hash than
+ *  `toDateString()` when counting a year of events. */
+const dayKey = (d: Date) => d.getFullYear() * 10000 + d.getMonth() * 100 + d.getDate();
+
+/* Memoized for the same reason as TimeGrid: the workspace re-renders far more
+ * often than the month it is showing changes. */
+export const MonthGrid = memo(function MonthGrid({
   anchor,
   events,
   weekStart = 0,
@@ -152,10 +159,7 @@ export function MonthGrid({
                     <>
                       {!seg.event.allDay && !seg.continuesBefore ? (
                         <span className="mg__bar-time">
-                          {seg.event.start.toLocaleTimeString(undefined, {
-                            hour: "numeric",
-                            minute: seg.event.start.getMinutes() ? "2-digit" : undefined,
-                          })}
+                          {compactTime(seg.event.start)}
                         </span>
                       ) : null}
                       <span className="mg__bar-title">{seg.event.title}</span>
@@ -169,7 +173,7 @@ export function MonthGrid({
       </div>
     </div>
   );
-}
+});
 
 /**
  * The year view: twelve months at a glance.
@@ -178,7 +182,7 @@ export function MonthGrid({
  * unreadable, so each day carries a density dot instead — the question a year
  * view answers is "when was I busy", not "what was it called".
  */
-export function YearGrid({
+export const YearGrid = memo(function YearGrid({
   year,
   events,
   weekStart = 0,
@@ -192,10 +196,10 @@ export function YearGrid({
   const today = useNow();
 
   const counts = useMemo(() => {
-    const map = new Map<string, number>();
+    const map = new Map<number, number>();
     for (const ev of events) {
       for (const d of daysCovered(ev.start, ev.end)) {
-        const key = d.toDateString();
+        const key = dayKey(d);
         map.set(key, (map.get(key) ?? 0) + 1);
       }
     }
@@ -214,7 +218,7 @@ export function YearGrid({
             <div className="yg__grid">
               {weeks.flat().map((day) => {
                 const inMonth = day.getMonth() === m;
-                const n = inMonth ? counts.get(day.toDateString()) ?? 0 : 0;
+                const n = inMonth ? counts.get(dayKey(day)) ?? 0 : 0;
                 return (
                   <button
                     className={
@@ -239,4 +243,4 @@ export function YearGrid({
       })}
     </div>
   );
-}
+});

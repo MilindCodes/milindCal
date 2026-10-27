@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MilindDocFile } from "@/lib/models";
 
 interface DocsGraphViewProps {
@@ -114,16 +114,30 @@ export function DocsGraphView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docs.length]);
 
-  /* ── Build edge set ── */
-  const getEdges = useCallback(() => {
-    const edges: { from: string; to: string }[] = [];
+  /* ── Build edge set ──
+   * Built once per docs change. The physics loop asked for it every frame,
+   * and each call scanned the whole doc list once per link. */
+  const edges = useMemo(() => {
+    const ids = new Set(docs.map((d) => d.id));
+    const out: { from: string; to: string }[] = [];
     docs.forEach((doc) => {
       const targets = new Set([...doc.links, ...(doc.graphLinks ?? [])]);
       targets.forEach((to) => {
-        if (docs.some((d) => d.id === to)) edges.push({ from: doc.id, to });
+        if (ids.has(to)) out.push({ from: doc.id, to });
       });
     });
-    return edges;
+    return out;
+  }, [docs]);
+  const getEdges = useCallback(() => edges, [edges]);
+
+  /* Where each node was last saved, so settling persists only what moved.
+   * Every settle used to write every node — one store update and one
+   * milindDrive PATCH per doc — even when nothing had moved at all. */
+  const savedPosRef = useRef(new Map<string, { x: number; y: number }>());
+  useEffect(() => {
+    for (const doc of docs) {
+      if (doc.graphPos) savedPosRef.current.set(doc.id, doc.graphPos);
+    }
   }, [docs]);
 
   /* ── Physics simulation ── */
@@ -173,9 +187,10 @@ export function DocsGraphView({
     }
 
     // Spring attraction along edges
+    const byId = new Map(nodes.map((n) => [n.id, n]));
     edges.forEach(({ from, to }) => {
-      const a = nodes.find((n) => n.id === from);
-      const b = nodes.find((n) => n.id === to);
+      const a = byId.get(from);
+      const b = byId.get(to);
       if (!a || !b) return;
       const dx = b.x - a.x;
       const dy = b.y - a.y;
@@ -247,9 +262,13 @@ export function DocsGraphView({
         isSimulatingRef.current = false;
         // Final render sync
         setRenderTick((t) => t + 1);
-        // Persist final positions
+        // Persist final positions — only those that moved.
         nodesRef.current.forEach((n) => {
-          onUpdateGraphPos(n.id, { x: n.x, y: n.y });
+          const saved = savedPosRef.current.get(n.id);
+          if (saved && Math.abs(saved.x - n.x) < 0.5 && Math.abs(saved.y - n.y) < 0.5) return;
+          const pos = { x: n.x, y: n.y };
+          savedPosRef.current.set(n.id, pos);
+          onUpdateGraphPos(n.id, pos);
         });
       }
     };
@@ -374,7 +393,6 @@ export function DocsGraphView({
   }, []);
 
   /* ── Build SVG edge elements ── */
-  const edges = getEdges();
   const nodeMap = new Map(nodesRef.current.map((n) => [n.id, n]));
 
   return (

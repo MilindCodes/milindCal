@@ -41,7 +41,13 @@ async function refreshGoogleAccessToken(token: JWT): Promise<JWT> {
       ...token,
       accessToken: refreshed.access_token,
       expiresAt: Date.now() + refreshed.expires_in * 1000,
-      refreshToken: refreshed.refresh_token ?? token.refreshToken
+      refreshToken: refreshed.refresh_token ?? token.refreshToken,
+      // A refresh that works has to clear the last one's failure. The spread
+      // above carries `error` forward, so a single failed refresh (a network
+      // blip on wake) left "RefreshAccessTokenError" in the cookie for good:
+      // the milindDrive banner never went away and the store kept falling
+      // back to localStorage, though the token was fine again a minute later.
+      error: undefined
     };
   } catch {
     return {

@@ -2,7 +2,7 @@
 
 import { MonthGrid, YearGrid } from "@/components/calendar-grid/month-grid";
 import { TimeGrid, type GridEvent } from "@/components/calendar-grid/time-grid";
-import { DEFAULT_AXIS, addDays, eventLabel, monthWeeks, pointToDay, pointToSlot, startOfDay, weekDays } from "@/lib/calendar-grid";
+import { DEFAULT_AXIS, addDays, compactTime, eventLabel, monthWeeks, pointToDay, pointToSlot, startOfDay, weekDays } from "@/lib/calendar-grid";
 import { AnimatePresence, animate, motion, useMotionValue, useTransform, LayoutGroup } from "framer-motion";
 import { AlertCircle, AlertTriangle, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, FileText, Layers, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -141,6 +141,19 @@ const IMPORTANCE_EVENT_COLORS: Record<string, string> = {
   high: "#ef4444",
 };
 
+/** The parts of a record the calendar draws. */
+interface ScheduledRecord {
+  id: string;
+  title: string;
+  start?: string;
+  end?: string;
+  allDay?: boolean;
+  completed: boolean;
+  importance: string;
+  googleEventId?: string;
+  googleCalendarId?: string;
+}
+
 const VIEW_LABELS: Record<CalendarView, string> = {
   timeGridDay: "Day",
   timeGridWeek: "Week",
@@ -206,15 +219,18 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
    * visible window and the title are derived rather than announced. */
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
 
-  /* What to fetch from Google. Month and year pull wider than they draw,
-   * because a month grid shows the tail of the previous month and the head of
-   * the next, and those days must not be empty. */
+  /* What the view shows, and so what must be fetched from Google. A month
+   * grid shows the tail of the previous month and the head of the next, and
+   * those days must not be empty. */
   const range = useMemo(() => {
     if (view === "dayGridMonth") {
-      const first = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
+      // Exactly the six weeks the grid draws. A fixed week either side of the
+      // month fell short of the last row in months like February 2026, whose
+      // grid runs two weeks past the month's end.
+      const weeks = monthWeeks(anchorDate, 0);
       return {
-        start: addDays(startOfDay(first), -7).toISOString(),
-        end: addDays(new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 1), 7).toISOString(),
+        start: weeks[0][0].toISOString(),
+        end: addDays(weeks[weeks.length - 1][6], 1).toISOString(),
       };
     }
     if (view === "multiMonthYear") {
@@ -235,11 +251,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const [error, setError] = useState<string | null>(null);
   const [eventEditorOpen, setEventEditorOpen] = useState(false);
 
-  // Clear the FullCalendar drag-selection highlight when the editor is dismissed
-  useEffect(() => {
-    if (!eventEditorOpen) {
-    }
-  }, [eventEditorOpen]);
   const [calendarDialogOpen, setCalendarDialogOpen] = useState(false);
 
   /* Once opened, stay mounted: unmounting on close would cut off the exit
@@ -622,8 +633,9 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   const eventsRef = useRef(events);
   useEffect(() => { eventsRef.current = events; });
 
-  /* Same reasoning for tasks: tile renderers and drop handlers need the
-   * current list without being re-created on every task edit. */
+  /* Same reasoning for tasks: the drop handler needs the current list without
+   * being re-created on every task edit. Never read during render — the ref
+   * only catches up after a commit. */
   const tasksRef = useRef<Task[]>(tasks);
   useEffect(() => { tasksRef.current = tasks; });
   // Read by the drop handler, which stays referentially stable across polling
@@ -937,9 +949,14 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       const fe = fetchEnd.getTime();
       let changed = false;
       const newKeys = new Set(data.events.map(ev => `${ev.calendarId}::${ev.id}`));
+      // A calendar that failed to load returned nothing, which is not the same
+      // as having nothing. Reading its silence as "every event was deleted"
+      // emptied that calendar off the grid on any transient Google error.
+      const failed = new Set(data.failedCalendarIds ?? []);
 
       // Identify deletions
       for (const [key, ev] of eventsCacheRef.current) {
+        if (failed.has(ev.calendarId)) continue;
         const evMs = new Date(ev.start).getTime();
         if (evMs >= fs && evMs < fe) {
           if (!newKeys.has(key)) {
@@ -968,13 +985,19 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         }
       }
 
-      // Expand the known-good window to include what was just fetched.
-      const prev = fetchedWindowRef.current;
-      fetchedWindowRef.current = {
-        start: Math.min(fs, prev?.start ?? fs),
-        end:   Math.max(fe, prev?.end   ?? fe),
-        at:    now
-      };
+      // Expand the known-good window to include what was just fetched — but
+      // only across a range that really was fetched. Taking the min and max of
+      // two windows that do not touch also claims the gap between them, and
+      // any jump past the prefetch margin would then land on a stretch the
+      // cache check calls fresh but nothing ever loaded. A fetch with a failed
+      // calendar claims nothing, so the next navigation tries again.
+      if (failed.size === 0) {
+        const prev = fetchedWindowRef.current;
+        const touches = prev !== null && fs <= prev.end && fe >= prev.start;
+        fetchedWindowRef.current = touches
+          ? { start: Math.min(fs, prev.start), end: Math.max(fe, prev.end), at: now }
+          : { start: fs, end: fe, at: now };
+      }
 
       // The rendered count comes from the ref, not the closure. This callback
       // is rebuilt only when the range or the selected calendars change, so
@@ -1013,6 +1036,22 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   // without including it as a dependency (which would reset the timer on every event reload).
   const readEventsRef = useRef(readEvents);
   useEffect(() => { readEventsRef.current = readEvents; });
+
+  /* Apply one event the server has already told us about — or that we are
+   * about to tell it about — without refetching every calendar for weeks
+   * either side. Saves, moves and deletes used to wait on a full reload
+   * before the grid changed, so a dragged meeting snapped back to where it
+   * started and sat there for two round trips. */
+  const upsertLocalEvent = useCallback((ev: CalendarEvent) => {
+    eventsCacheRef.current.set(`${ev.calendarId}::${ev.id}`, ev);
+    setEvents(Array.from(eventsCacheRef.current.values()));
+  }, []);
+
+  const removeLocalEvent = useCallback((calendarId: string, eventId: string) => {
+    if (eventsCacheRef.current.delete(`${calendarId}::${eventId}`)) {
+      setEvents(Array.from(eventsCacheRef.current.values()));
+    }
+  }, []);
 
   const selectedForSync = useMemo(
     () => Array.from(new Set(selectedCalendarIds.map((item) => item.trim()).filter(Boolean))).sort(),
@@ -1157,57 +1196,89 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   /* Everything with a time, whichever table backs it. Reading `records`
    * rather than the board's list means a record that is only a sheet, or only
    * a doc, still appears on the calendar once it has a start. */
-  const scheduledRecords = useMemo(
-    () =>
-      records
-        .filter((r) => r.start)
-        .map((r) => ({
-          id: r.id,
-          title: r.title,
-          start: r.start,
-          end: r.end,
-          allDay: r.allDay,
-          completed: r.status === "done",
-          importance: r.importance ?? "medium",
-          googleEventId: r.google?.eventId,
-        })),
-    [records],
-  );
+  /* Kept at the same identity while nothing the calendar draws has changed.
+   * `records` is a new array on every edit anywhere — a doc autosave, a task
+   * renamed on the board — and each one used to rebuild every tile on the
+   * grid. The signature covers exactly the fields read below. */
+  const scheduledCacheRef = useRef<{ sig: string; list: ScheduledRecord[] }>({ sig: "", list: [] });
+  const scheduledRecords = useMemo(() => {
+    const list: ScheduledRecord[] = records
+      .filter((r) => r.start)
+      .map((r) => ({
+        id: r.id,
+        title: r.title,
+        start: r.start,
+        end: r.end,
+        allDay: r.allDay,
+        completed: r.status === "done",
+        importance: r.importance ?? "medium",
+        googleEventId: r.google?.eventId,
+        googleCalendarId: r.google?.calendarId,
+      }));
+    const sig = list
+      .map((r) => [r.id, r.title, r.start, r.end, r.allDay, r.completed, r.importance, r.googleEventId, r.googleCalendarId].join("\u0001"))
+      .join("\u0002");
+    if (sig === scheduledCacheRef.current.sig) return scheduledCacheRef.current.list;
+    scheduledCacheRef.current = { sig, list };
+    return list;
+  }, [records]);
 
   const gridEvents = useMemo<GridEvent[]>(() => {
+    // Only what the view can show. The cache keeps every week ever visited,
+    // so after paging around for a while the grid was laying out, sorting and
+    // allocating Dates for months of events it would never draw.
+    const windowStart = new Date(range.start).getTime();
+    const windowEnd = new Date(range.end).getTime();
+    const inWindow = (start: number, end: number) => start < windowEnd && end > windowStart;
+
     // Events milindCal has adopted are rendered from their record below;
     // drawing Google's copy too would put two tiles in the same slot.
-    const adopted = adoptedGoogleKeys(records);
+    const adopted = adoptedGoogleKeys(scheduledRecords.map((r) => ({
+      start: r.start,
+      google: r.googleEventId && r.googleCalendarId
+        ? { eventId: r.googleEventId, calendarId: r.googleCalendarId }
+        : undefined,
+    })));
+    const colorByKey = new Map<string, string>();
 
-    const out: GridEvent[] = events
-      .filter((event) => !adopted.has(`${event.calendarId}::${event.id}`))
-      .map((event) => ({
-        id: `${event.calendarId}::${event.id}`,
+    const out: GridEvent[] = [];
+    for (const event of events) {
+      const key = `${event.calendarId}::${event.id}`;
+      colorByKey.set(key, event.color);
+      if (adopted.has(key)) continue;
+      const start = new Date(event.start);
+      // An event with no end is a point in time; give it an hour so it has
+      // something to draw. FullCalendar used to do this silently.
+      const end = event.end ? new Date(event.end) : new Date(start.getTime() + 3600_000);
+      if (!inWindow(start.getTime(), end.getTime())) continue;
+      out.push({
+        id: key,
         title: event.title,
-        start: new Date(event.start),
-        // An event with no end is a point in time; give it an hour so it has
-        // something to draw. FullCalendar used to do this silently.
-        end: new Date(event.end || new Date(new Date(event.start).getTime() + 3600_000)),
+        start,
+        end,
         allDay: event.allDay,
         accent: event.color || "#4f8cff",
-      }));
+      });
+    }
 
     for (const task of scheduledRecords) {
       if (!task.start) continue;
+      const start = new Date(task.start);
+      const end = new Date(task.end || start.getTime() + 3600_000);
+      if (!inWindow(start.getTime(), end.getTime())) continue;
       const color = task.completed
         ? "#9ca3af"
         : task.googleEventId
           // Adopted from Google: keep the calendar's own colour so the tile
           // still reads as the meeting it is, not as a generic task.
-          ? events.find((e) => e.id === task.googleEventId)?.color
+          ? colorByKey.get(`${task.googleCalendarId}::${task.googleEventId}`)
             ?? IMPORTANCE_EVENT_COLORS.medium
           : IMPORTANCE_EVENT_COLORS[task.importance] ?? IMPORTANCE_EVENT_COLORS.medium;
-      const start = new Date(task.start);
       out.push({
         id: `task:${task.id}`,
         title: task.title,
         start,
-        end: new Date(task.end || start.getTime() + 3600_000),
+        end,
         allDay: task.allDay ?? false,
         accent: color,
         done: task.completed ?? false,
@@ -1215,7 +1286,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     }
 
     return out;
-  }, [events, records, scheduledRecords]);
+  }, [events, scheduledRecords, range.start, range.end]);
 
 
 
@@ -1284,12 +1355,14 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     setEventEditorOpen(true);
   }, []);
 
-  const onEventClick = (eventClick: { event: { id: string } }) => {
+  /* Stable, reading records and events through refs, so the memoized grids
+   * are not handed a new click handler on every workspace render. */
+  const onEventClick = useCallback((eventClick: { event: { id: string } }) => {
     // Scheduled tasks live on the board, so surface them there rather than in
     // the Google event editor, which has no record to load.
     if (eventClick.event.id.startsWith("task:")) {
       const recordId = eventClick.event.id.slice("task:".length);
-      const record = records.find((r) => r.id === recordId);
+      const record = recordsRef.current.find((r) => r.id === recordId);
       // A doc on the calendar opens as the doc it is; the task board has no
       // row for it and would open on nothing.
       if (record && opensAsDoc(record)) {
@@ -1304,7 +1377,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     if (sep === -1) return;
     const calendarId = eventClick.event.id.slice(0, sep);
     const eventId = eventClick.event.id.slice(sep + 2);
-    const found = events.find((event) => event.id === eventId && event.calendarId === calendarId);
+    const found = eventsRef.current.find((event) => event.id === eventId && event.calendarId === calendarId);
     if (!found) return;
 
     // Open editor immediately with cached data
@@ -1312,14 +1385,52 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     setDraftWindow({});
     setEventEditorOpen(true);
 
-    // Fresh-fetch to get up-to-date event data and replace stale cache
-    void fetch(`/api/google/events/${eventId}?calendarId=${encodeURIComponent(calendarId)}`)
+    // Fresh-fetch in case the cached copy is stale. The editor re-seeds every
+    // field whenever the event it is given changes, so swapping in the fetched
+    // copy unconditionally wiped whatever the user had started typing in the
+    // half-second it took to arrive — almost always for an identical event.
+    // Replace it only when it is still the event on screen and Google says it
+    // really changed.
+    void fetch(`/api/google/events/${encodeURIComponent(eventId)}?calendarId=${encodeURIComponent(calendarId)}`)
       .then((r) => r.ok ? r.json() : null)
       .then((data: { event: CalendarEvent } | null) => {
-        if (data?.event) setEditingEvent(data.event);
+        const fresh = data?.event;
+        if (!fresh) return;
+        setEditingEvent((cur) => {
+          if (!cur || cur.id !== fresh.id || cur.calendarId !== fresh.calendarId) return cur;
+          if (cur.etag && fresh.etag && cur.etag === fresh.etag) return cur;
+          return fresh;
+        });
       })
       .catch(() => undefined);
-  };
+  }, [openAsDoc]);
+
+  /* Stable adapters for the grids' callbacks — see onEventClick. */
+  const handleTileClick = useCallback(
+    (ev: { id: string }) => onEventClick({ event: { id: ev.id } }),
+    [onEventClick],
+  );
+
+  const handleSlotClick = useCallback((start: Date) => {
+    onSelectRange({
+      startStr: start.toISOString(),
+      endStr: new Date(start.getTime() + 3600_000).toISOString(),
+    });
+  }, [onSelectRange]);
+
+  const handleMonthDayClick = useCallback((day: Date) => {
+    const at = new Date(day);
+    at.setHours(9, 0, 0, 0);
+    onSelectRange({
+      startStr: at.toISOString(),
+      endStr: new Date(at.getTime() + 3600_000).toISOString(),
+    });
+  }, [onSelectRange]);
+
+  const handleYearDayClick = useCallback((day: Date) => {
+    setAnchorDate(day);
+    changeView("timeGridDay");
+  }, [changeView]);
 
   const closeExpandedDay = useCallback(() => {
     setExpandedDate(null);
@@ -1358,6 +1469,11 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     setExpandedDateEvents(dayEvents);
   }, [expandedDate, gridEvents, closeExpandedDay]);
 
+  const handleMoreClick = useCallback(
+    (day: Date, _hidden: number, anchor: HTMLElement) => onMoreLinkClick(day, anchor),
+    [onMoreLinkClick],
+  );
+
   /* Calendar is a drop target for tasks / docs. The drop router picks the
    * time slot from target.data; we leave it undefined here so it defaults
    * to "now → now + 1h" and the editor opens for fine-tuning. */
@@ -1388,7 +1504,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
   }, [events]);
 
   const renderEventContent = useCallback((arg: {
-    event: { id: string; title: string; allDay: boolean; extendedProps?: { accent?: string } };
+    event: { id: string; title: string; allDay: boolean; extendedProps?: { accent?: string; done?: boolean } };
     timeText: string;
     isStart: boolean;
   }) => {
@@ -1398,21 +1514,35 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
 
     if (arg.event.id.startsWith("task:")) {
       const taskId = arg.event.id.slice("task:".length);
-      const task = tasksRef.current.find((t) => t.id === taskId);
+      /* Completion comes with the tile, from the same render as its colour.
+       * It was read from tasksRef, which is only updated after a render
+       * commits — so ticking the box greyed the tile at once but drew the
+       * tick from the task's *previous* state, and the box stayed empty
+       * until something else happened to re-render the grid. */
+      const done = arg.event.extendedProps?.done ?? false;
       return (
         <div className="milind-tile milind-tile--task" style={{ "--tile-accent": accent } as React.CSSProperties}>
-          <button
-            aria-label={task?.completed ? "Mark task as open" : "Mark task as done"}
-            aria-pressed={task?.completed ?? false}
+          {/* A span, not a button: the tile is already a <button>, and a
+            * button inside a button is invalid markup. */}
+          <span
+            aria-checked={done}
+            aria-label={done ? "Mark task as open" : "Mark task as done"}
             className="milind-tile__check"
             onClick={(e) => {
               e.stopPropagation();
-              updateTask(taskId, { completed: !task?.completed });
+              updateTask(taskId, { completed: !done });
             }}
-            type="button"
+            onKeyDown={(e) => {
+              if (e.key !== " " && e.key !== "Enter") return;
+              e.preventDefault();
+              e.stopPropagation();
+              updateTask(taskId, { completed: !done });
+            }}
+            role="checkbox"
+            tabIndex={-1}
           >
-            {task?.completed ? <Check size={10} strokeWidth={3} /> : null}
-          </button>
+            {done ? <Check size={10} strokeWidth={3} /> : null}
+          </span>
           <span className="milind-tile__body">
             <span className="milind-tile__title">{arg.event.title}</span>
             {arg.timeText ? <span className="milind-tile__time">{arg.timeText}</span> : null}
@@ -1442,28 +1572,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     );
   }, [eventsById, updateTask]);
 
-  /* Adapters between the grid's plain callbacks and the handlers above, which
-   * still speak the shape they were written against. */
-  const handleGridEventChange = useCallback(
-    (id: string, start: Date, end: Date) => {
-      const source = gridEvents.find((e) => e.id === id);
-      void updateMovedOrResizedEvent({
-        event: {
-          id,
-          startStr: start.toISOString(),
-          endStr: end.toISOString(),
-          allDay: source?.allDay ?? false,
-        },
-        revert: () => setError("Could not move that event — Google rejected the change"),
-      });
-    },
-    // updateMovedOrResizedEvent is redefined every render by design; it closes
-    // over live event state. Depending on it here would rebuild this on every
-    // render for no benefit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [gridEvents],
-  );
-
   const handleGridCreate = useCallback((start: Date, end: Date) => {
     onSelectRange({ startStr: start.toISOString(), endStr: end.toISOString() });
   }, [onSelectRange]);
@@ -1476,14 +1584,9 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
           id: ev.id,
           title: ev.title,
           allDay: ev.allDay ?? false,
-          extendedProps: { accent: ev.accent },
+          extendedProps: { accent: ev.accent, done: ev.done },
         },
-        timeText: ev.allDay
-          ? ""
-          : ev.start.toLocaleTimeString(undefined, {
-              hour: "numeric",
-              minute: ev.start.getMinutes() ? "2-digit" : undefined,
-            }),
+        timeText: ev.allDay ? "" : compactTime(ev.start),
         isStart: true,
       }),
     [renderEventContent],
@@ -1530,13 +1633,6 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     return () => window.clearTimeout(timer);
   }, [syncWarning]);
 
-  // When the task board collapses, FullCalendar needs to re-measure its container
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-    }, 320);
-    return () => window.clearTimeout(timer);
-  }, [taskBoardExpanded]);
-
   // Shy-cursor hover effect was removed — it wrote inline transforms to every
   // visible .fc-event on every mousemove inside the calendar, which was
   // visibly janking pointer input on larger weeks. The cursor-trail dot alone
@@ -1565,7 +1661,18 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         throw new Error("Unable to save event");
       }
 
-      await readEvents({ silent: true, force: true });
+      /* Google's reply is the saved event, so put that on the grid rather
+       * than reloading every calendar. A recurrence is the exception: saving
+       * one creates or reshapes a whole series of instances that the reply
+       * does not list, so that still takes a fetch. */
+      const data = (await response.json().catch(() => null)) as { event?: CalendarEvent } | null;
+      const recurring = (event.recurrence?.length ?? 0) > 0
+        || (eventId ? (editingEvent?.recurrence?.length ?? 0) > 0 : false);
+      if (data?.event && !recurring) {
+        upsertLocalEvent(data.event);
+      } else {
+        await readEventsRef.current({ silent: true, force: true });
+      }
     } catch (saveError) {
       setError(humanizeError(saveError, "Unable to save event"));
       throw saveError;
@@ -1583,7 +1690,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
       }
 
       setEventEditorOpen(false);
-      await readEvents({ silent: true, force: true });
+      removeLocalEvent(event.calendarId, event.id);
     } catch (deleteError) {
       setError(humanizeError(deleteError, "Unable to delete event"));
       throw deleteError;
@@ -1602,7 +1709,7 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     // there is no separate event to keep in step.
     if (change.event.id.startsWith("task:")) {
       const recordId = change.event.id.slice("task:".length);
-      const record = records.find((r) => r.id === recordId);
+      const record = recordsRef.current.find((r) => r.id === recordId);
       // updateRecord, not updateTask: updateTask's doc branch has no slot for
       // a schedule, so a scheduled doc dragged on the grid silently dropped
       // its new time and snapped back. updateRecord writes a doc's time into
@@ -1646,23 +1753,29 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
     if (sep === -1) return;
     const calendarId = change.event.id.slice(0, sep);
     const eventId = change.event.id.slice(sep + 2);
-    const current = events.find((item) => item.id === eventId && item.calendarId === calendarId);
+    const current = eventsCacheRef.current.get(`${calendarId}::${eventId}`)
+      ?? eventsRef.current.find((item) => item.id === eventId && item.calendarId === calendarId);
 
     if (!current) return;
 
-    const nextPayload: GoogleEventPayload = {
-      title: current.title,
-      description: current.description,
-      location: current.location,
+    /* A move changes when, and only when — the same rule the adopted-record
+     * branch above already follows. This sent the whole event back, and the
+     * mapped `colorId` of an event that takes its calendar's colour is the
+     * "other" type's grey, so dragging any plain Google event repainted it
+     * grey in Google Calendar and stamped it as type "other". Guests are
+     * still told about the new time, as Google Calendar itself does. */
+    const nextPayload: Partial<GoogleEventPayload> = {
       allDay: current.allDay,
       start: change.event.startStr,
       end: change.event.endStr || current.end,
-      attendees: current.attendees,
-      recurrence: current.recurrence,
-      reminders: current.reminders,
-      eventType: current.eventType,
-      colorId: current.colorId,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    };
+
+    // Move the tile now; the request confirms it or puts it back.
+    upsertLocalEvent({ ...current, start: nextPayload.start as string, end: nextPayload.end as string });
+    const putBack = () => {
+      upsertLocalEvent(current);
+      change.revert();
     };
 
     try {
@@ -1673,20 +1786,45 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
         },
         body: JSON.stringify({
           calendarId,
+          sendUpdates: current.attendees.length ? "all" : "none",
           event: nextPayload
         })
       });
 
       if (!response.ok) {
-        change.revert();
+        putBack();
         return;
       }
 
-      await readEvents({ silent: true, force: true });
+      const data = (await response.json().catch(() => null)) as { event?: CalendarEvent } | null;
+      if (data?.event) upsertLocalEvent(data.event);
     } catch {
-      change.revert();
+      putBack();
     }
   };
+
+  /* The grid's move callback, kept stable for the memoized TimeGrid. It reads
+   * the latest move handler through a ref: the useCallback this replaces was
+   * rebuilt only when gridEvents changed, so it kept calling a handler — and
+   * through it a readEvents — from the week the user had already paged away
+   * from. */
+  const moveEventRef = useRef(updateMovedOrResizedEvent);
+  useEffect(() => { moveEventRef.current = updateMovedOrResizedEvent; });
+  const gridEventsRef = useRef(gridEvents);
+  useEffect(() => { gridEventsRef.current = gridEvents; });
+
+  const handleGridEventChange = useCallback((id: string, start: Date, end: Date) => {
+    const source = gridEventsRef.current.find((e) => e.id === id);
+    void moveEventRef.current({
+      event: {
+        id,
+        startStr: start.toISOString(),
+        endStr: end.toISOString(),
+        allDay: source?.allDay ?? false,
+      },
+      revert: () => setError("Could not move that event — Google rejected the change"),
+    });
+  }, []);
 
   const createCalendar = async (input: { summary: string; description: string; backgroundColor: string }) => {
     try {
@@ -2090,25 +2228,15 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
                   anchor={anchorDate}
                   events={gridEvents}
                   maxLanes={MONTH_DAY_EVENT_PREVIEW_LIMIT}
-                  onDayClick={(day) => {
-                    const at = new Date(day);
-                    at.setHours(9, 0, 0, 0);
-                    onSelectRange({
-                      startStr: at.toISOString(),
-                      endStr: new Date(at.getTime() + 3600_000).toISOString(),
-                    });
-                  }}
-                  onEventClick={(ev) => onEventClick({ event: { id: ev.id } })}
-                  onMoreClick={(day, _hidden, anchor) => onMoreLinkClick(day, anchor)}
+                  onDayClick={handleMonthDayClick}
+                  onEventClick={handleTileClick}
+                  onMoreClick={handleMoreClick}
                   renderEvent={renderGridEvent}
                 />
               ) : view === "multiMonthYear" ? (
                 <YearGrid
                   events={gridEvents}
-                  onDayClick={(day) => {
-                    setAnchorDate(day);
-                    changeView("timeGridDay");
-                  }}
+                  onDayClick={handleYearDayClick}
                   year={anchorDate.getFullYear()}
                 />
               ) : (
@@ -2117,13 +2245,8 @@ function CalendarWorkspaceInner({ userName }: CalendarWorkspaceProps) {
                   events={gridEvents}
                   onCreate={handleGridCreate}
                   onEventChange={handleGridEventChange}
-                  onEventClick={(ev) => onEventClick({ event: { id: ev.id } })}
-                  onSlotClick={(start) =>
-                    onSelectRange({
-                      startStr: start.toISOString(),
-                      endStr: new Date(start.getTime() + 3600_000).toISOString(),
-                    })
-                  }
+                  onEventClick={handleTileClick}
+                  onSlotClick={handleSlotClick}
                   renderEvent={renderGridEvent}
                 />
               )}

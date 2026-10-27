@@ -49,10 +49,13 @@ export function useGridDrag({ days, axis, threshold = DEFAULT_THRESHOLD, onCommi
     setDrag(next);
   }, []);
 
-  const snap = useCallback(
-    (minutes: number) => Math.round(minutes / axis.slotMinutes) * axis.slotMinutes,
-    [axis.slotMinutes],
-  );
+  /* The live values the window listeners read. They are attached once per
+   * gesture rather than re-attached whenever the parent hands down new props,
+   * so they read these instead of closing over them. */
+  const latest = useRef({ days, axis, onCommit, threshold });
+  useEffect(() => {
+    latest.current = { days, axis, onCommit, threshold };
+  });
 
   const minutesFromY = useCallback(
     (clientY: number) => {
@@ -106,24 +109,47 @@ export function useGridDrag({ days, axis, threshold = DEFAULT_THRESHOLD, onCommi
     [minutesFromY, setBoth],
   );
 
+  /* Listeners live for the whole gesture: keyed on whether a drag exists, not
+   * on the drag itself. Keying on `drag` tore them down and re-added them on
+   * every pointermove. */
+  const dragging = drag !== null;
+
   useEffect(() => {
-    if (!drag) return;
+    if (!dragging) return;
 
     const onMove = (e: PointerEvent) => {
       const cur = dragRef.current;
       if (!cur) return;
+      const { days: d, axis: a, threshold: t } = latest.current;
       const origin = originRef.current;
       const moved =
         cur.moved ||
         (origin
-          ? Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > threshold
+          ? Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > t
           : false);
-      setBoth({
+      const next: DragState = {
         ...cur,
         toDay: cur.kind === "resize" ? cur.fromDay : dayFromX(e.clientX),
         toMinutes: minutesFromY(e.clientY),
         moved,
-      });
+      };
+      /* Re-render only when what the grid would draw changes. A pointer
+       * reports every pixel — 120 times a second on some hardware — but the
+       * preview only moves when the pointer crosses a 15-minute slot or a
+       * day, and each render here re-renders every tile in the week. The ref
+       * still takes every move, so the commit uses the exact release point. */
+      const before = cur.moved ? resolveDrag(cur, d, a) : null;
+      const after = moved ? resolveDrag(next, d, a) : null;
+      dragRef.current = next;
+      const same =
+        cur.moved === moved &&
+        (before === after ||
+          (before !== null &&
+            after !== null &&
+            before.dayIndex === after.dayIndex &&
+            before.start.getTime() === after.start.getTime() &&
+            before.end.getTime() === after.end.getTime()));
+      if (!same) setDrag(next);
     };
 
     const onUp = () => {
@@ -131,8 +157,9 @@ export function useGridDrag({ days, axis, threshold = DEFAULT_THRESHOLD, onCommi
       setBoth(null);
       originRef.current = null;
       if (!cur || !cur.moved) return; // a click, handled elsewhere
-      const result = resolveDrag(cur, days, axis);
-      if (result) onCommit(cur.kind, result, cur.eventId);
+      const { days: d, axis: a, onCommit: commit } = latest.current;
+      const result = resolveDrag(cur, d, a);
+      if (result) commit(cur.kind, result, cur.eventId);
     };
 
     const onCancel = () => {
@@ -148,7 +175,7 @@ export function useGridDrag({ days, axis, threshold = DEFAULT_THRESHOLD, onCommi
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);
     };
-  }, [drag, days, axis, threshold, dayFromX, minutesFromY, onCommit, setBoth, snap]);
+  }, [dragging, dayFromX, minutesFromY, setBoth]);
 
   return { bodyRef, drag, begin };
 }

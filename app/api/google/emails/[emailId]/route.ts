@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getGmailClient, mapGoogleMessageToDetail } from "@/lib/google";
+import { buildRawEmail, getGmailClient, mapGoogleMessageToDetail } from "@/lib/google";
 
 export const runtime = "nodejs";
 
@@ -217,20 +217,17 @@ export async function POST(req: Request, context: { params: Promise<{ emailId: s
       }
 
       const referencesValue = [references, messageId].filter(Boolean).join(" ").trim();
-      const rawMessage = [
-        `To: ${primaryRecipient}`,
-        ccValue ? `Cc: ${ccValue}` : "",
-        extraBcc ? `Bcc: ${extraBcc}` : "",
-        `Subject: ${subject}`,
-        "Content-Type: text/plain; charset=UTF-8",
-        "MIME-Version: 1.0",
-        messageId ? `In-Reply-To: ${messageId}` : "",
-        referencesValue ? `References: ${referencesValue}` : "",
-        "",
+      const rawMessage = buildRawEmail(
+        [
+          ["To", primaryRecipient],
+          ["Cc", ccValue],
+          ["Bcc", extraBcc],
+          ["Subject", subject],
+          ["In-Reply-To", messageId],
+          ["References", referencesValue]
+        ],
         replyText
-      ]
-        .filter(Boolean)
-        .join("\r\n");
+      );
 
       await gmail.users.messages.send({
         userId: "me",

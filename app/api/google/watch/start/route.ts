@@ -140,12 +140,20 @@ export async function POST(req: Request) {
     await putChannels(createdChannels);
   }
 
-  // Channels are already registered (both with Google and in the store) at this
-  // point — a sync-signal hiccup must not report an already-successful watch
-  // setup as a failure.
-  await touchUserSync(userEmail).catch((err) => {
-    console.error("[watch/start] touchUserSync failed after successful setup:", err);
-  });
+  // A new channel can follow a stretch nobody was watching, so ask clients to
+  // catch up then — and only then. The client calls this route every time the
+  // tab becomes visible; bumping the version unconditionally made each of
+  // those visits look like a remote change, so every tab switch ended in a
+  // full refetch of every calendar.
+  //
+  // Channels are already registered (both with Google and in the store) at
+  // this point — a sync-signal hiccup must not report an already-successful
+  // watch setup as a failure.
+  if (createdChannels.length || stopCandidates.length) {
+    await touchUserSync(userEmail).catch((err) => {
+      console.error("[watch/start] touchUserSync failed after successful setup:", err);
+    });
+  }
 
   const mergedChannels = [
     ...Array.from(activeByCalendar.values()).filter((item) => calendarIds.includes(item.calendarId)),
